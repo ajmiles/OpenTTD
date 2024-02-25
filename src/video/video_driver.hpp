@@ -16,6 +16,7 @@
 #include "../gfx_func.h"
 #include "../settings_type.h"
 #include "../zoom_type.h"
+#include "../spriteloader/spriteloader.hpp"	// TODO, Bad? Probably.
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -143,6 +144,48 @@ public:
 	virtual uint8_t *GetAnimBuffer()
 	{
 		return nullptr;
+	}
+	
+	/**
+	 * Does this video driver support using the GPU to blit?
+	 * @return True if the driver can GPU blit.
+	 */
+	virtual bool SupportsGPUBlitting()
+	{
+		return false;
+	}
+
+	/**
+	 * Passes a request to the video driver to draw a solid-colour rectangle.
+	 */
+	virtual void EnqueueFillRect(int left, int top, int right, int bottom, uint8_t colour)
+	{
+		return;
+	}
+
+	/**
+	 * Passes a request to the video driver to draw a Sprite in a given location and in a specified way.
+	 */
+	virtual void EnqueueSpriteBlit(SpriteBlitRequest* request)
+	{
+		return;
+	}
+	
+	/**
+	 * Allows the video driver to create GPU resources associated with a given Sprite
+	 * @return Returns an opaque unique identifier to this set of sprites. 
+	 */
+	virtual uint32_t CreateGPUSprite(const SpriteLoader::SpriteCollection &sprite)
+	{
+		return -1;
+	}
+
+	/**
+	 * Requests the video driver scroll any persistent off-screen buffers such the Video buffer or Anim buffer. 
+	 */
+	virtual void ScrollBuffer(int &left, int &top, int &width, int &height, int scroll_x, int scroll_y)
+	{
+		return;
 	}
 
 	/**

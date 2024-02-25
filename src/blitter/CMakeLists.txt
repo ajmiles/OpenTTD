@@ -39,6 +39,12 @@ add_files(
 )
 
 add_files(
+    40bpp_anim_gpu.cpp
+    40bpp_anim_gpu.hpp
+    CONDITION NOT OPTION_DEDICATED AND D3D12_FOUND
+)
+
+add_files(
     base.hpp
     common.hpp
     factory.hpp

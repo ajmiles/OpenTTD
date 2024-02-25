@@ -12,6 +12,12 @@ if(NOT OPTION_DEDICATED)
         opengl.h
         CONDITION OPENGL_FOUND
     )
+	
+	add_files(
+        d3d12.cpp
+        d3d12.h 
+        CONDITION D3D12_FOUND
+    )
 
     add_files(
         sdl_v.cpp

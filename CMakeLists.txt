@@ -178,6 +178,13 @@ endif()
 find_package(SSE)
 find_package(Xaudio2)
 
+if(WIN32)
+    find_package(D3D12)
+    if(D3D12_FOUND)
+        add_definitions(-DWITH_D3D12)
+    endif()
+endif()
+
 find_package(Grfcodec)
 
 include(CheckIPOSupported)

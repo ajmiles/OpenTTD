@@ -351,4 +351,16 @@ enum StringAlignment {
 };
 DECLARE_ENUM_AS_BIT_SET(StringAlignment)
 
+struct SpriteBlitRequest {
+	uint32_t gpuSpriteID;
+	int left;
+	int top;
+	int right;
+	int bottom;
+	int skip_left;
+	int skip_top;
+	ZoomLevel zoom;
+	uint blitterMode;	// BlitterMode. Can't include the type from here
+};
+
 #endif /* GFX_TYPE_H */

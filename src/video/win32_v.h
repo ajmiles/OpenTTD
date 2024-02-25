@@ -176,4 +176,99 @@ protected:
 
 #endif /* WITH_OPENGL */
 
+#if WITH_D3D12
+/** The D3D12 video driver for windows. */
+class VideoDriver_Win32D3D12 : public VideoDriver_Win32Base {
+public:
+	VideoDriver_Win32D3D12() : VideoDriver_Win32Base(true)
+	{}
+
+	const char *Start(const StringList &param) override;
+
+	void Stop() override;
+
+	bool ToggleFullscreen(bool fullscreen) override;
+
+	bool AfterBlitterChange() override;
+
+	bool HasEfficient8Bpp() const override
+	{
+		return true;
+	}
+
+	bool UseSystemCursor() override
+	{
+		return false;
+	}
+
+	void PopulateSystemSprites() override;
+
+	void ClearSystemSprites() override;
+
+	bool HasAnimBuffer() override
+	{
+		return true;
+	}
+	uint8_t *GetAnimBuffer() override;
+
+	bool SupportsGPUBlitting() override
+	{
+		return true;
+	}
+
+	void EnqueueFillRect(int left, int top, int right, int bottom, uint8_t colour) override;
+	void EnqueueSpriteBlit(SpriteBlitRequest *request) override;
+	uint32_t CreateGPUSprite(const SpriteLoader::SpriteCollection &sprite) override;
+	void ScrollBuffer(int &left, int &top, int &width, int &height, int scroll_x, int scroll_y) override;
+
+	void ToggleVsync(bool vsync) override;
+
+	const char *GetName() const override
+	{
+		return "win32-d3d12";
+	}
+
+	const char *GetInfoString() const override
+	{
+		return this->driver_info.c_str();
+	}
+
+protected:
+
+	std::string driver_info; ///< Information string about selected driver.
+	uint8_t *anim_buffer;	///< Animation buffer from D3D12 back-end.
+
+	HRESULT CreateOrResizeSwapchain(int w, int h);
+
+	uint8_t GetFullscreenBpp() override
+	{
+		return 32;
+	} // D3D12 is always 32 bpp.
+
+	void Paint() override;
+
+	bool AllocateBackingStore(int w, int h, bool force = false) override;
+	void *GetVideoPointer() override;
+	void ReleaseVideoPointer() override;
+	void PaletteChanged(HWND) override {}
+};
+
+/** The factory for Windows' D3D12 video driver. */
+class FVideoDriver_Win32D3D12 : public DriverFactoryBase {
+public:
+	FVideoDriver_Win32D3D12() : DriverFactoryBase(Driver::DT_VIDEO, 10, "win32-d3d12", "Win32 D3D12 Video Driver")
+	{}
+	/* virtual */ Driver *CreateInstance() const override
+	{
+		return new VideoDriver_Win32D3D12();
+	}
+
+protected:
+	bool UsesHardwareAcceleration() const override
+	{
+		return true;
+	}
+};
+#endif /* WITH_D3D12 */
+
 #endif /* VIDEO_WIN32_H */

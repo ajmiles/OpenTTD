@@ -1520,3 +1520,153 @@ void VideoDriver_Win32OpenGL::Paint()
 }
 
 #endif /* WITH_OPENGL */
+
+#ifdef WITH_D3D12
+
+#include "d3d12.h"
+
+static FVideoDriver_Win32D3D12 iFVideoDriver_Win32D3D12;
+
+const char *VideoDriver_Win32D3D12::Start(const StringList &param)
+{
+	if (BlitterFactory::GetCurrentBlitter()->GetScreenDepth() == 0) return "Only real blitters supported";
+
+	const char *err = D3D12Backend::Create();
+	if (err != nullptr) return err;
+
+	this->Initialize();
+
+	/* Don't use legacy MakeWindow fullscreen handling, handle this later in ToggleFullscreen.
+	 * Set dxgi_fullscreen there as a hint to CreateSwapchain to allow it to select optimal DXGI swap effect. */
+	bool fs = false;// this->dxgi_fullscreen = _fullscreen;
+	this->MakeWindow(false);
+
+	this->ClientSizeChanged(this->width, this->height, true);
+
+	//if (_screen.dst_ptr == nullptr) return "D3D12 setup failed";
+
+	if (fs) this->ToggleFullscreen(true);
+
+	/* Main loop expects to start with the buffer unmapped. */
+	this->ReleaseVideoPointer();
+
+	MarkWholeScreenDirty();
+
+	this->is_game_threaded = !GetDriverParamBool(param, "no_threads") && !GetDriverParamBool(param, "no_thread");
+
+	return nullptr;
+}
+
+void VideoDriver_Win32D3D12::Stop()
+{
+	this->VideoDriver_Win32Base::Stop();
+}
+
+void VideoDriver_Win32D3D12::ToggleVsync(bool vsync)
+{
+}
+
+bool VideoDriver_Win32D3D12::ToggleFullscreen(bool full_screen)
+{
+	return true;
+}
+
+bool VideoDriver_Win32D3D12::AfterBlitterChange()
+{
+	assert(BlitterFactory::GetCurrentBlitter()->GetScreenDepth() != 0);
+	this->ClientSizeChanged(this->width, this->height, true);
+	return true;
+}
+
+void VideoDriver_Win32D3D12::PopulateSystemSprites()
+{
+
+}
+
+void VideoDriver_Win32D3D12::ClearSystemSprites()
+{
+
+}
+
+bool VideoDriver_Win32D3D12::AllocateBackingStore(int w, int h, bool force)
+{
+	HRESULT result = D3D12Backend::Get()->CreateOrResizeSwapchain(w, h, force, main_wnd);
+
+	if(FAILED(result))
+		return false;
+
+	if (this->buffer_locked) {
+		this->buffer_locked = false;
+		LockVideoBuffer();
+	}
+
+	this->dirty_rect = {};
+
+	return true;
+}
+
+uint8_t *VideoDriver_Win32D3D12::GetAnimBuffer()
+{
+	return D3D12Backend::Get()->GetAnimBuffer();
+}
+
+void *VideoDriver_Win32D3D12::GetVideoPointer()
+{
+	if (BlitterFactory::GetCurrentBlitter()->NeedsAnimationBuffer()) {
+		this->anim_buffer = D3D12Backend::Get()->GetAnimBuffer();
+	}
+	return D3D12Backend::Get()->GetVideoBuffer();
+}
+
+void VideoDriver_Win32D3D12::ReleaseVideoPointer()
+{
+	if (this->anim_buffer != nullptr) {
+		D3D12Backend::Get()->ReleaseAnimBuffer(this->dirty_rect);
+	}
+	D3D12Backend::Get()->ReleaseVideoBuffer(this->dirty_rect);
+	this->dirty_rect = {};
+	_screen.dst_ptr = nullptr;
+	this->anim_buffer = nullptr;
+}
+
+void VideoDriver_Win32D3D12::EnqueueFillRect(int left, int top, int right, int bottom, uint8_t colour)
+{
+	D3D12Backend::Get()->EnqueueFillRect(left, top, right, bottom, colour);
+}
+
+void VideoDriver_Win32D3D12::EnqueueSpriteBlit(SpriteBlitRequest *request)
+{
+	D3D12Backend::Get()->EnqueueSpriteBlit(request);
+}
+
+uint32_t VideoDriver_Win32D3D12::CreateGPUSprite(const SpriteLoader::SpriteCollection &sprite)
+{
+	return D3D12Backend::Get()->CreateGPUSprite(sprite);
+}
+
+void VideoDriver_Win32D3D12::ScrollBuffer(int &left, int &top, int &width, int &height, int scroll_x, int scroll_y)
+{
+	return D3D12Backend::Get()->ScrollBuffer(left, top, width, height, scroll_x, scroll_y);
+}
+
+void VideoDriver_Win32D3D12::Paint()
+{
+	PerformanceMeasurer framerate(PFE_VIDEO);
+
+	if (_local_palette.count_dirty != 0) {
+		Blitter *blitter = BlitterFactory::GetCurrentBlitter();
+
+		/* Always push a changed palette to D3D12. */
+		D3D12Backend::Get()->UpdatePalette(_local_palette.palette, _local_palette.first_dirty, _local_palette.count_dirty);
+		if (blitter->UsePaletteAnimation() == Blitter::PALETTE_ANIMATION_BLITTER) {
+			blitter->PaletteAnimate(_local_palette);
+		}
+
+		_local_palette.count_dirty = 0;
+	}
+
+	D3D12Backend::Get()->Paint();
+	D3D12Backend::Get()->Present();
+}
+
+#endif
