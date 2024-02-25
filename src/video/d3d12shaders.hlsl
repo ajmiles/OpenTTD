@@ -81,6 +81,8 @@ cbuffer Params
 {
 	uint shaderMode;
 	uint frameIndex;
+	uint cursorLocationX;
+	uint cursorLocationY;
 };
 
 float max3(float3 v) 
@@ -114,6 +116,11 @@ float4 mainPS(float4 vpos : SV_POSITION) : SV_TARGET
 		float4 remap_col = MakeColour(palette[frameIndex][vpos.x]).ToFloat4();
 		return float4(remap_col.rgb, 1);
 	}
+	
+	float2 cursorPos = float2(cursorLocationX, cursorLocationY);
+	
+	if(length(cursorPos - vpos.xy) < 5)
+		return float4(1, 0, 0, 1);
 	
 	uint idx = remap_tex[coord];	
 	Colour remap_col = MakeColour(palette[frameIndex][idx]);

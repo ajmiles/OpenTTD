@@ -317,15 +317,6 @@ void D3D12Backend::Present()
 		swapChainResourceState = D3D12_RESOURCE_STATE_PRESENT;
 	}
 
-
-	int left = 0;
-	int top = 0;
-	int right = _screen.width;
-	int bottom = _screen.height;
-	int scrollX = 1;
-	int scrollY = 1;
-	//ScrollBuffer(left, top, right, bottom, scrollX, scrollY);
-
 	commandList->Close();
 	commandQueue->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList *const *>(commandList.GetAddressOf()));
 
@@ -334,7 +325,6 @@ void D3D12Backend::Present()
 	commandQueue->Signal(fence.Get(), frameEndValues[currentFrameIndex]);
 	fence->SetEventOnCompletion(frameEndValues[currentFrameIndex], frameEvents[currentFrameIndex]);
 
-	//Sleep(2000);
 
 	HRESULT hr = swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
 
@@ -634,7 +624,6 @@ void D3D12Backend::Paint()
 	FlushSpriteBuffer();
 	UpdatePaletteResource();
 
-
 	commandList->SetGraphicsRootSignature(rootSignature.Get());
 	commandList->SetDescriptorHeaps(1, srvHeap.GetAddressOf());
 	commandList->SetGraphicsRootDescriptorTable(1, srvHeap->GetGPUDescriptorHandleForHeapStart());
@@ -661,8 +650,6 @@ void D3D12Backend::Paint()
 	D3D12_CPU_DESCRIPTOR_HANDLE rtvStart = rtvHeap->GetCPUDescriptorHandleForHeapStart();
 	rtvStart.ptr += (currentFrameIndex * rtvDescriptorSize);
 
-
-
 	commandList->OMSetRenderTargets(1, &rtvStart, TRUE, nullptr);
 	commandList->SetPipelineState(finalCombinePSO.Get());
 
@@ -675,6 +662,9 @@ void D3D12Backend::Paint()
 	commandList->SetGraphicsRoot32BitConstant(0, shaderMode, 0);
 	commandList->SetGraphicsRoot32BitConstant(0, currentFrameIndex, 1);
 
+	Point cursor_pos = _cursor.pos;
+	commandList->SetGraphicsRoot32BitConstants(0, 2, &cursor_pos, 2);
+
 	commandList->DrawInstanced(3, 1, 0, 0);
 }
 
@@ -683,10 +673,12 @@ void D3D12Backend::Paint()
  */
 void D3D12Backend::DrawMouseCursor()
 {
+	// TODO
 }
 
 void D3D12Backend::PopulateCursorCache()
 {
+
 }
 
 /**
@@ -770,15 +762,15 @@ void D3D12Backend::EnqueueSpriteBlit(SpriteBlitRequest *request)
 	if (spriteResources[request->gpuSpriteID].spriteResources[request->zoom] == nullptr)
 		return;
 
-	DXGI_FORMAT format = spriteResources[request->gpuSpriteID].spriteResources[request->zoom]->GetDesc().Format;
-
 	BlitRequest req = { request->left, request->top, request->right, request->bottom, request->skip_left, request->skip_top, 0,
-		(format == DXGI_FORMAT_R8_UINT) ? BlitType::SPRITE_OPAQUE : BlitType::SPRITE_ALPHA, request->gpuSpriteID, request->zoom, request->blitterMode };
+		BlitType::SPRITE_ALPHA, request->gpuSpriteID, request->zoom, request->blitterMode };
+
 	blitRequests.push_back(req);
 }
 
 uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spriteColl)
 {
+	// TODO - Don't put the sprites in system memory!
 	D3D12_HEAP_PROPERTIES heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE, D3D12_MEMORY_POOL_L0);
 
 	SpriteResourceSet spriteZoomSet = {};
@@ -859,14 +851,10 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 		textureHandle.ptr += ((Descriptors::SPRITE_START + (nextGPUSpriteID * ZOOM_LVL_END) + z) * srvDescriptorSize);
 
 		device->CreateShaderResourceView(*zoomTex, &srvDesc, textureHandle);
-
-		//if (sprite.type == SpriteType::Font)
-		//	break;
 	}
 	
 	spriteResources.push_back(spriteZoomSet);
 
-	// TODO Stuff
 	return nextGPUSpriteID++;
 }
 

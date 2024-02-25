@@ -198,7 +198,7 @@ public:
 
 	bool UseSystemCursor() override
 	{
-		return false;
+		return true;
 	}
 
 	void PopulateSystemSprites() override;

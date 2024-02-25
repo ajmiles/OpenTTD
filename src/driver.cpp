@@ -128,7 +128,7 @@ bool DriverFactoryBase::SelectDriverImpl(const std::string &name, Driver::Type t
 					 * If it is here, it most likely means we crashed. So skip
 					 * hardware acceleration. */
 					auto filename = FioFindFullPath(BASE_DIR, HWACCELERATION_TEST_FILE);
-					if (!filename.empty()) {
+					if (false) {//!filename.empty()) {
 						unlink(filename.c_str());
 
 						Debug(driver, 1, "Probing {} driver '{}' skipped due to earlier crash", GetDriverTypeName(type), d->name);

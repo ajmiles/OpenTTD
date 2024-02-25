@@ -46,6 +46,9 @@ uint GetMaxSpriteID();
 
 inline const Sprite *GetSprite(SpriteID sprite, SpriteType type)
 {
+	if (sprite == 0) {
+		int z = 0;
+	}
 	assert(type != SpriteType::Recolour);
 	return (Sprite*)GetRawSprite(sprite, type);
 }
