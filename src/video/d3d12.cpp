@@ -39,7 +39,7 @@
 #include "mainVS.csh"
 #include "mainPS.csh"
 #include "DrawVS.csh"
-#include "DrawPS.csh"
+#include "ROVPS.csh"
 #include "ScrollXCS.csh"
 #include "ScrollYCS.csh"
 #include "BlitCS.csh"
@@ -103,11 +103,31 @@ const char *D3D12Backend::Init()
 
 	ComPtr<ID3D12Debug> debugController;
 	if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(debugController.GetAddressOf())))) {
-		debugController->EnableDebugLayer();
+		//debugController->EnableDebugLayer();
+
+		ComPtr<ID3D12Debug1> spDebugController1;
+		debugController->QueryInterface(IID_PPV_ARGS(&spDebugController1));
+		//spDebugController1->SetEnableGPUBasedValidation(true);
 	}
 
-	HRESULT hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(device.ReleaseAndGetAddressOf()));
-	device->SetName(L"OpenTTD D3D12 Device");
+	static bool useWarpDevice = false;
+
+	HRESULT hr;
+
+	if (useWarpDevice) {
+		ComPtr<IDXGIFactory4> factory;
+		hr = CreateDXGIFactory2(DXGI_CREATE_FACTORY_DEBUG, IID_PPV_ARGS(&factory));
+
+		ComPtr<IDXGIAdapter> warpAdapter;
+		hr = factory->EnumWarpAdapter(IID_PPV_ARGS(&warpAdapter));
+
+		hr = D3D12CreateDevice(warpAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(device.ReleaseAndGetAddressOf()));
+		device->SetName(L"OpenTTD D3D12 Device");
+	}
+	else {
+		hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(device.ReleaseAndGetAddressOf()));
+		device->SetName(L"OpenTTD D3D12 Device");
+	}
 
 	if (FAILED(hr))
 		return "Failed to create D3D12 Device at Feature Level 11.0";
@@ -121,8 +141,10 @@ const char *D3D12Backend::Init()
 	if (FAILED(hr))
 		return "Failed to create D3D12 Graphics Command Queue";
 
-	hr = device->CreateFence(nextFenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(fence.ReleaseAndGetAddressOf()));
-	fence->SetName(L"OpenTTD D3D12 Fence");
+	for (int i = 0; i < SWAP_CHAIN_BACK_BUFFER_COUNT; i++) {
+		hr = device->CreateFence(nextFenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(fences[i].ReleaseAndGetAddressOf()));
+		fences[i]->SetName(L"OpenTTD D3D12 Fence");
+	}
 
 	fenceEvent = CreateEventA(nullptr, FALSE, FALSE, "Fence Event");
 
@@ -159,10 +181,9 @@ const char *D3D12Backend::Init()
 	hr = device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(finalCombinePSO.ReleaseAndGetAddressOf()));
 
 	psoDesc.VS = { g_DrawVS, sizeof(g_DrawVS) };
-	psoDesc.PS = { g_DrawPS, sizeof(g_DrawPS) };
-	psoDesc.NumRenderTargets = 2;
-	psoDesc.RTVFormats[0] = DXGI_FORMAT_R32_UINT;
-	psoDesc.RTVFormats[1] = DXGI_FORMAT_R8_UINT;
+	psoDesc.PS = { g_ROVPS, sizeof(g_ROVPS) };
+	psoDesc.NumRenderTargets = 0;
+	psoDesc.RTVFormats[0] = DXGI_FORMAT_UNKNOWN;
 	
 	hr = device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(blitPSO.ReleaseAndGetAddressOf()));
 
@@ -196,22 +217,16 @@ const char *D3D12Backend::Init()
 
 void D3D12Backend::WaitForGPU()
 {
+	ComPtr<ID3D12Fence> fence = fences[0];	// Doesn't matter which fence we use
 	UINT64 now = fence->GetCompletedValue();
 	UINT64 toBe = ++nextFenceValue;
 	commandQueue->Signal(fence.Get(), toBe);
 
-	char str[256];
-	sprintf_s(str, "Fence = 0x%llu. Fence was %u. Fence to be set to %u\n", fence, now, toBe);
-	//OutputDebugStringA(str);
-
+	// TODO. Use an event.
 	while (fence->GetCompletedValue() < nextFenceValue)
 	{
-		sprintf_s(str, "Fence is %u\n", fence->GetCompletedValue());
-		//OutputDebugStringA(str);
+		Sleep(0);
 	}
-	//fence->SetEventOnCompletion(nextFenceValue, fenceEvent);
-
-	//WaitForSingleObject(fenceEvent, INFINITE);
 }
 
 HRESULT D3D12Backend::CreateOrResizeSwapchain(int w, int h, bool force, HWND hwnd)
@@ -301,9 +316,12 @@ HRESULT D3D12Backend::CreateOrResizeSwapchain(int w, int h, bool force, HWND hwn
 
 void D3D12Backend::Present()
 {
-	//OutputDebugStringA("Present!\n");
-
 	uint currentFrameIndex = swapChain->GetCurrentBackBufferIndex();
+
+	char str[256];
+	sprintf_s(str, "Present (%u)\n", currentFrameIndex);
+	PIXBeginEvent(PIX_COLOR_DEFAULT, str);
+
 
 	if (swapChainResourceState != D3D12_RESOURCE_STATE_PRESENT) {
 		D3D12_RESOURCE_BARRIER transitionBarrier = {};
@@ -322,17 +340,40 @@ void D3D12Backend::Present()
 
 	frameEndValues[currentFrameIndex] = ++nextFenceValue;
 
-	commandQueue->Signal(fence.Get(), frameEndValues[currentFrameIndex]);
-	fence->SetEventOnCompletion(frameEndValues[currentFrameIndex], frameEvents[currentFrameIndex]);
-
-
+	PIXBeginEvent(PIX_COLOR_DEFAULT, "swapChain->Present()");
 	HRESULT hr = swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
+	PIXEndEvent();
+
+	UINT64 valueToSignalTo = frameEndValues[currentFrameIndex];
+	sprintf_s(str, "Signal + SetEventOnCompletion (%u) to value %u", currentFrameIndex, valueToSignalTo);
+
+	PIXBeginEvent(PIX_COLOR_DEFAULT, str);
+	commandQueue->Signal(fences[currentFrameIndex].Get(), valueToSignalTo);
+	fences[currentFrameIndex]->SetEventOnCompletion(valueToSignalTo, frameEvents[currentFrameIndex]);
+	PIXEndEvent();
 
 	frameNumber++;
-	remapBufferSpaceUsedThisFrame = 0;
+
+	if (frameNumber < 20) 		{
+		wchar_t name[256];
+		swprintf_s(name, L"E:/%u.wpix", frameNumber);
+		//PIXGpuCaptureNextFrames(name, 1);
+	}
 
 	currentFrameIndex = swapChain->GetCurrentBackBufferIndex();
-	WaitForSingleObject(frameEvents[currentFrameIndex], INFINITE);
+
+	remapBufferSpaceUsedThisFrame = 0;
+
+	sprintf_s(str, "WaitForPreviousFrame (%u). Waiting on value %u. Currently %u.\n", currentFrameIndex, frameEndValues[currentFrameIndex], fences[currentFrameIndex]->GetCompletedValue());
+	PIXBeginEvent(PIX_COLOR_DEFAULT, str);	
+	//WaitForSingleObject(frameEvents[currentFrameIndex], INFINITE);
+
+	while (fences[currentFrameIndex]->GetCompletedValue() < frameEndValues[currentFrameIndex]) {
+		//__debugbreak();
+		YieldProcessor();
+	}
+
+	PIXEndEvent();
 
 	commandAllocators[currentFrameIndex]->Reset();
 	commandList->Reset(commandAllocators[currentFrameIndex].Get(), nullptr);
@@ -347,8 +388,8 @@ void D3D12Backend::Present()
 
 	if (seconds > 1.0f) {
 
-		char str[256];
-		sprintf_s(str, "FPS: %u\n", frames);
+		//char str[256];
+		//sprintf_s(str, "FPS: %u\n", frames);
 		//OutputDebugStringA(str);
 
 		frames = 0;
@@ -357,11 +398,7 @@ void D3D12Backend::Present()
 
 	frames++;
 
-	// Wait for
-
-	if (FAILED(hr)) {
-		__debugbreak();
-	}
+	PIXEndEvent();
 }
 
 void D3D12Backend::PrepareContext()
@@ -532,11 +569,28 @@ void D3D12Backend::FlushSpriteBuffer()
 	if (blitRequests.size() == 0)
 		return;
 
+	LARGE_INTEGER freq, start, end;
+	QueryPerformanceFrequency(&freq);
+	QueryPerformanceCounter(&start);
+
 	uint currentFrameIndex = swapChain->GetCurrentBackBufferIndex();
+
+	char str[256];
+	sprintf_s(str, "FlushSpriteBuffer (%u) %u sprites", currentFrameIndex, blitRequests.size());
+
+	PIXBeginEvent(commandList.Get(), PIX_COLOR_DEFAULT, str);
 
 	UpdatePaletteResource();
 
-	static bool useCompute = true;
+
+	static bool useCompute = false;
+
+
+	static const D3D12_RESOURCE_BARRIER uavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
+
+	D3D12_GPU_VIRTUAL_ADDRESS baseRemapAddress = remap_buffer_upload[currentFrameIndex]->GetGPUVirtualAddress();
+	uint screenResolution = (_screen.width | (_screen.height << 16));
+	uint passConstants[2] = { screenResolution, currentFrameIndex };
 
 	commandList->SetDescriptorHeaps(1, srvHeap.GetAddressOf());
 
@@ -549,27 +603,23 @@ void D3D12Backend::FlushSpriteBuffer()
 
 		commandList->SetComputeRootDescriptorTable(1, srvHeap->GetGPUDescriptorHandleForHeapStart());
 		commandList->SetComputeRootDescriptorTable(2, firstSpriteHandle);
+		commandList->SetComputeRootShaderResourceView(3, baseRemapAddress);
+		commandList->SetComputeRoot32BitConstants(4, ARRAYSIZE(passConstants), passConstants, 0);
 
-		uint screenResolution = (_screen.width | (_screen.height << 16));
-		D3D12_GPU_VIRTUAL_ADDRESS baseRemapAddress = remap_buffer_upload[currentFrameIndex]->GetGPUVirtualAddress();
+		UINT numDwordsToSetForRequest = sizeof(BlitRequest) / sizeof(uint);
 
 		for (int i = 0; i < blitRequests.size(); i++) {
+
 			BlitRequest &req = blitRequests[i];
-
-			uint arr[13] = { req.left, req.top, req.right, req.bottom, req.skip_left, req.skip_top,
-				req.colour, req.blitType, req.gpuSpriteID, req.zoom, req.blitterMode, screenResolution, currentFrameIndex };
-
-			commandList->SetComputeRoot32BitConstants(0, ARRAYSIZE(arr), arr, 0);
-			commandList->SetComputeRootShaderResourceView(3, baseRemapAddress + req.remapByteOffset);
-
+			
+			commandList->SetComputeRoot32BitConstants(0, numDwordsToSetForRequest, &req, 0);
+			
 			uint width = req.right - req.left + 1;
 			uint height = req.bottom - req.top + 1;
 			uint numGroupsX = (width + 7) / 8;
 			uint numGroupsY = (height + 7) / 8;
 
 			commandList->Dispatch(numGroupsX, numGroupsY, 1);
-
-			D3D12_RESOURCE_BARRIER uavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
 			commandList->ResourceBarrier(1, &uavBarrier);
 		}
 	}
@@ -583,44 +633,63 @@ void D3D12Backend::FlushSpriteBuffer()
 		D3D12_RECT scissor = { 0, 0, _screen.width, _screen.height };
 		commandList->RSSetScissorRects(1, &scissor);
 
+		/*
 		D3D12_RESOURCE_BARRIER targetsSRVToRTV[2];
 		targetsSRVToRTV[0] = CD3DX12_RESOURCE_BARRIER::Transition(vid_texture_default_GPUBlitter.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_RENDER_TARGET);
 		targetsSRVToRTV[1] = CD3DX12_RESOURCE_BARRIER::Transition(anim_texture_default_GPUBlitter.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_RENDER_TARGET);
 		commandList->ResourceBarrier(ARRAYSIZE(targetsSRVToRTV), targetsSRVToRTV);
-
+		*/
 		// Draw the blit requests.
 		commandList->SetPipelineState(blitPSO.Get());
 
-		D3D12_CPU_DESCRIPTOR_HANDLE animRTVHandle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
-		animRTVHandle.ptr += (SWAP_CHAIN_BACK_BUFFER_COUNT * rtvDescriptorSize);
-
-		commandList->OMSetRenderTargets(2, &animRTVHandle, TRUE, nullptr);
+		commandList->OMSetRenderTargets(0, nullptr, TRUE, nullptr);
 
 		D3D12_GPU_DESCRIPTOR_HANDLE firstSpriteHandle = srvHeap->GetGPUDescriptorHandleForHeapStart();
 		firstSpriteHandle.ptr += (Descriptors::SPRITE_START * srvDescriptorSize);
 
 		commandList->SetGraphicsRootDescriptorTable(1, srvHeap->GetGPUDescriptorHandleForHeapStart());
 		commandList->SetGraphicsRootDescriptorTable(2, firstSpriteHandle);
-
-		uint screenResolution = (_screen.width | (_screen.height << 16));
+		commandList->SetGraphicsRootShaderResourceView(3, baseRemapAddress);
+		commandList->SetGraphicsRoot32BitConstants(4, ARRAYSIZE(passConstants), passConstants, 0);
+		
+		UINT numDwordsToSetForRequest = sizeof(BlitRequest) / sizeof(uint);
 
 		for (int i = 0; i < blitRequests.size(); i++) {
 			BlitRequest &req = blitRequests[i];
 
-			uint arr[13] = { req.left, req.top, req.right, req.bottom, req.skip_left, req.skip_top,
-				req.colour, req.blitType, req.gpuSpriteID, req.zoom, req.blitterMode, screenResolution, currentFrameIndex };
-
-			commandList->SetGraphicsRoot32BitConstants(0, ARRAYSIZE(arr), arr, 0);
+			commandList->SetGraphicsRoot32BitConstants(0, numDwordsToSetForRequest, &req, 0);
 			commandList->DrawInstanced(6, 1, 0, 0);
 		}
 
+		/*
 		D3D12_RESOURCE_BARRIER targetsRTVToSRV[2];
 		targetsRTVToSRV[0] = CD3DX12_RESOURCE_BARRIER::Transition(vid_texture_default_GPUBlitter.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 		targetsRTVToSRV[1] = CD3DX12_RESOURCE_BARRIER::Transition(anim_texture_default_GPUBlitter.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-		commandList->ResourceBarrier(ARRAYSIZE(targetsRTVToSRV), targetsRTVToSRV);
+		commandList->ResourceBarrier(ARRAYSIZE(targetsRTVToSRV), targetsRTVToSRV);*/
 	}
 
+	uint numRequests = blitRequests.size();
+
 	blitRequests.clear();
+
+	PIXEndEvent(commandList.Get());
+	
+	QueryPerformanceCounter(&end);
+
+	double seconds = (end.QuadPart - start.QuadPart) / (double)freq.QuadPart;
+	double milliseconds = seconds * 1000.0;
+
+	
+
+	static UINT64 totalRequests = 0;
+	static double totalTime = 0;
+
+	totalRequests += numRequests;
+	totalTime += seconds;
+
+	sprintf_s(str, "FlushSpriteBuffer, %f per millisecond\n", totalRequests / (totalTime * 1000.0));
+	OutputDebugStringA(str);
+	
 }
 
 /**
@@ -628,6 +697,8 @@ void D3D12Backend::FlushSpriteBuffer()
  */
 void D3D12Backend::Paint()
 {
+	PIXBeginEvent(commandList.Get(), PIX_COLOR_DEFAULT, L"Paint");
+
 	uint currentFrameIndex = swapChain->GetCurrentBackBufferIndex();
 
 	FlushSpriteBuffer();
@@ -675,6 +746,8 @@ void D3D12Backend::Paint()
 	commandList->SetGraphicsRoot32BitConstants(0, 2, &cursor_pos, 2);
 
 	commandList->DrawInstanced(3, 1, 0, 0);
+
+	PIXEndEvent(commandList.Get());
 }
 
 /**
@@ -744,25 +817,30 @@ void D3D12Backend::ReleaseAnimBuffer(const Rect &update_rect)
 
 void D3D12Backend::UpdatePaletteResource()
 {
-	if (paletteIsDirty) {
-		uint *palette;
-		palette_texture_upload[swapChain->GetCurrentBackBufferIndex()]->Map(0, nullptr, (void **)&palette);
-		memcpy(palette, paletteSurface, 256 * 4);
-	}
+	uint index = swapChain->GetCurrentBackBufferIndex();
 
-	paletteIsDirty = false;
+	if (paletteIsDirty[index]) {
+		
+		uint *palette;
+		palette_texture_upload[index]->Map(0, nullptr, (void **)&palette);
+		memcpy(palette, paletteSurface, 256 * 4);
+
+		paletteIsDirty[index] = false;
+	}
 }
 
 void D3D12Backend::UpdatePalette(const Colour *pal, uint first, uint length)
 {
 	memcpy((uint32_t*)paletteSurface + first, pal + first, length * 4);
-	paletteIsDirty = true;
+
+	for (int i = 0; i < SWAP_CHAIN_BACK_BUFFER_COUNT; i++)
+		paletteIsDirty[i] = true;
 }
 
 
 void D3D12Backend::EnqueueFillRect(int left, int top, int right, int bottom, uint8_t colour)
 {
-	BlitRequest req = { left, top, right, bottom, 0, 0, colour, BlitType::SOLID_COLOUR, -1, ZOOM_LVL_BEGIN, 0 };
+	BlitRequest req = { left, top, right, bottom, 0, 0, colour, BlitType::SOLID_COLOUR, -1, ZOOM_LVL_BEGIN, 0, 0 };
 	blitRequests.push_back(req);
 }
 
@@ -773,6 +851,8 @@ void D3D12Backend::EnqueueSpriteBlit(SpriteBlitRequest *request)
 
 	BlitRequest req = { request->left, request->top, request->right, request->bottom, request->skip_left, request->skip_top, 0,
 		BlitType::SPRITE_ALPHA, request->gpuSpriteID, request->zoom, request->blitterMode, 0 };
+
+	static uint s_highWatermark = 0;
 
 	// TODO - I really need BlitterMode here...
 	if (request->blitterMode == 1 || request->blitterMode == 3 || request->blitterMode == 4 || request->blitterMode == 5) {
@@ -789,6 +869,14 @@ void D3D12Backend::EnqueueSpriteBlit(SpriteBlitRequest *request)
 			req.remapByteOffset = remapBufferSpaceUsedThisFrame;
 
 			remapBufferSpaceUsedThisFrame += spaceRequired;
+
+			if (remapBufferSpaceUsedThisFrame > s_highWatermark) {
+				s_highWatermark = remapBufferSpaceUsedThisFrame;
+
+				//char str[256];
+				//sprintf_s(str, "New high watermark: %u\n", s_highWatermark);
+				//OutputDebugStringA(str);
+			}
 		}
 		else {
 			__debugbreak();
@@ -845,7 +933,7 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 
 		ID3D12Resource **zoomTex = &spriteZoomSet.spriteResources[z];
 
-		HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(zoomTex));
+		HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(zoomTex));
 		assert(SUCCEEDED(hr));
 
 		// TODO - Don't have the textures in a System Memory heap - this is just for testing! Awful perf!
@@ -892,6 +980,8 @@ void D3D12Backend::ScrollBuffer(int &left, int &top, int &width, int &height, in
 {
 	FlushSpriteBuffer();
 
+	PIXBeginEvent(commandList.Get(), PIX_COLOR_DEFAULT, L"ScrollBuffer");
+
 	if (scroll_x != 0 || scroll_y != 0) 		{
 		commandList->SetComputeRootSignature(rootSignature.Get());
 
@@ -901,10 +991,6 @@ void D3D12Backend::ScrollBuffer(int &left, int &top, int &width, int &height, in
 		commandList->SetDescriptorHeaps(1, srvHeap.GetAddressOf());
 		commandList->SetComputeRootDescriptorTable(1, srvHeap->GetGPUDescriptorHandleForHeapStart());
 	}
-
-	char str[256];
-	sprintf_s(str, "Scrolling TL = (%d, %d). WH = (%d x %d) by (%d, %d)\n", left, top, width, height, scroll_x, scroll_y);
-	//OutputDebugStringA(str);
 
 	// Not sure what came before that we could overlap with...
 	D3D12_RESOURCE_BARRIER uavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
@@ -923,4 +1009,5 @@ void D3D12Backend::ScrollBuffer(int &left, int &top, int &width, int &height, in
 		commandList->ResourceBarrier(1, &uavBarrier);
 	}
 
+	PIXEndEvent(commandList.Get());
 }

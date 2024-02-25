@@ -97,9 +97,6 @@ void Blitter_40bppAnimGPU::Draw(Blitter::BlitterParams *bp, BlitterMode mode, Zo
 	request.blitterMode = mode;
 	request.remap = bp->remap;
 
-	char str[256];
-	sprintf_s(str, "Draw Sprite at %u, %u\n", request.left, request.top);
-	//OutputDebugStringA(str);
 
 	VideoDriver::GetInstance()->EnqueueSpriteBlit(&request);
 }
@@ -132,10 +129,6 @@ void Blitter_40bppAnimGPU::CopyImageToBuffer(const void *video, void *dst, int w
 
 void Blitter_40bppAnimGPU::ScrollBuffer(void *video, int &left, int &top, int &width, int &height, int scroll_x, int scroll_y)
 {
-	char str[256];
-	sprintf_s(str, "Before Scrolling TL = (%d, %d). WH = (%d x %d) by (%d, %d)\n", left, top, width, height, scroll_x, scroll_y);
-	//OutputDebugStringA(str);
-
 	VideoDriver::GetInstance()->ScrollBuffer(left, top, width, height, scroll_x, scroll_y);
 
 	// Not sure why this code is here...
@@ -165,9 +158,6 @@ void Blitter_40bppAnimGPU::ScrollBuffer(void *video, int &left, int &top, int &w
 			width += scroll_x;
 		}
 	}
-
-	//sprintf_s(str, "After Scrolling TL = (%d, %d). WH = (%d x %d) by (%d, %d)\n", left, top, width, height, scroll_x, scroll_y);
-	//OutputDebugStringA(str);
 }
 
 size_t Blitter_40bppAnimGPU::BufferSize(uint width, uint height)
@@ -196,10 +186,6 @@ Sprite *Blitter_40bppAnimGPU::EncodeInternal(const SpriteLoader::SpriteCollectio
 
 	SpriteData *dst = (SpriteData *)dest_sprite->data;
 	dst->gpuSpriteID = VideoDriver::GetInstance()->CreateGPUSprite(sprite);
-
-	char str[256];
-	sprintf_s(str, "Loaded GPU Sprite %u\n", dst->gpuSpriteID);
-	//OutputDebugStringA(str);
 
 	return dest_sprite;
 }

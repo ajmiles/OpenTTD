@@ -125,7 +125,7 @@ void ShowBaseSetTextfileWindow(TextfileType file_type, const TBaseSet *baseset, 
 	new BaseSetTextfileWindow<TBaseSet>(file_type, baseset, content_type);
 }
 
-std::set<int> _refresh_rates = { 30, 60, 75, 90, 100, 120, 144, 240 };
+std::set<int> _refresh_rates = { 30, 60, 75, 90, 100, 120, 144, 240, 480, 960 };
 
 /**
  * Add the refresh rate from the config and the refresh rates from all the monitors to

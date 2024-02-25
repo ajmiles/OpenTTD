@@ -28,6 +28,9 @@
 #include "d3dx12.h"
 #include <dxgi1_4.h>
 
+#define USE_PIX
+#include "pix/pix3.h"
+
 #define MAX_SPRITES_SUPPORTED 100000
 
 using Microsoft::WRL::ComPtr;
@@ -40,6 +43,7 @@ enum Descriptors {
 	VID_TEXTURE_UINT,
 	PALETTE_TEXTURE_0,
 	PALETTE_TEXTURE_1,
+	PALETTE_TEXTURE_2,
 
 	SPRITE_START,
 	DESCRIPTOR_COUNT = SPRITE_START + (MAX_SPRITES_SUPPORTED * ZOOM_LVL_END)
@@ -63,7 +67,7 @@ struct BlitRequest {
 	uint colour;
 	BlitType blitType;
 	uint32_t gpuSpriteID;
-	ZoomLevel zoom;
+	uint zoom;
 	uint blitterMode;	// BlitterMode
 	uint remapByteOffset;
 };
@@ -87,7 +91,7 @@ class D3D12Backend : public ZeroedMemoryAllocator {
 private:
 	static D3D12Backend *instance; ///< Singleton instance pointer.
 
-	static const uint SWAP_CHAIN_BACK_BUFFER_COUNT = 2;
+	static const uint SWAP_CHAIN_BACK_BUFFER_COUNT = 3;
 
 	// DXGI / D3D12 Resources
 	ComPtr<IDXGIFactory2> dxgiFactory;
@@ -95,7 +99,7 @@ private:
 	ComPtr<ID3D12Device4> device;
 	ComPtr<ID3D12CommandQueue> commandQueue;
 	ComPtr<IDXGISwapChain3> swapChain;
-	ComPtr<ID3D12Fence> fence;
+	ComPtr<ID3D12Fence> fences[SWAP_CHAIN_BACK_BUFFER_COUNT];
 
 	ComPtr<ID3D12RootSignature> rootSignature;
 	ComPtr<ID3D12PipelineState> finalCombinePSO;
@@ -113,7 +117,7 @@ private:
 	uint64_t nextFenceValue = 0;
 	HANDLE fenceEvent;
 
-	static const uint SIZE_OF_REMAP_BUFFER_UPLOAD_SPACE = 4 * 1024 * 1024;
+	static const uint SIZE_OF_REMAP_BUFFER_UPLOAD_SPACE = 64 * 1024 * 1024;
 
 	ComPtr<ID3D12Resource> vid_texture_upload[SWAP_CHAIN_BACK_BUFFER_COUNT];
 	ComPtr<ID3D12Resource> palette_texture_upload[SWAP_CHAIN_BACK_BUFFER_COUNT];
@@ -132,7 +136,8 @@ private:
 	void *vidSurface = nullptr;
 	void *animSurface = nullptr;
 	void *paletteSurface = nullptr;
-	bool paletteIsDirty = false;
+	bool paletteIsDirty[SWAP_CHAIN_BACK_BUFFER_COUNT];
+	bool isFirstPaletteUpdate = true;
 
 	uint surfacePitchInPixels;
 	uint remapBufferSpaceUsedThisFrame = 0;

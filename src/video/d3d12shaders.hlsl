@@ -1,4 +1,4 @@
-#define RootSig "RootConstants(b0, num32bitconstants=13), DescriptorTable(UAV(u0, numdescriptors=3, flags = DESCRIPTORS_VOLATILE), SRV(t0, numdescriptors=2)), DescriptorTable(SRV(t0, space=1, numdescriptors=unbounded)), SRV(t2)"
+#define RootSig "RootConstants(b0, num32bitconstants=12), DescriptorTable(UAV(u0, numdescriptors=3, flags = DESCRIPTORS_VOLATILE), SRV(t0, numdescriptors=3)), DescriptorTable(SRV(t0, space=1, numdescriptors=unbounded, flags = DESCRIPTORS_VOLATILE)), SRV(t3), RootConstants(b1, num32bitconstants=2)"
 
 enum BlitType
 {
@@ -66,11 +66,13 @@ Colour MakeColour(float4 colour)
 	return MakeColour(colour.r, colour.g, colour.b, colour.a);
 }
 
-RWTexture2D<float4> colour_tex : register(u0);
 RWTexture2D<uint> remap_tex : register(u1);
 RWTexture2D<uint> dst_tex : register(u2);
-Buffer<uint> palette[2] : register(t0);
-ByteAddressBuffer remap_buffer : register(t2);
+RasterizerOrderedTexture2D<uint> remap_rov : register(u1);
+RasterizerOrderedTexture2D<uint> dst_rov : register(u2);
+
+Buffer<uint> palette[3] : register(t0);
+ByteAddressBuffer remap_buffer : register(t3);
 
 Texture2D<uint2> spriteTextures[] : register(t0,space1);
 
@@ -78,7 +80,7 @@ static const uint SHADER_MODE_REMAP = 0;
 static const uint SHADER_MODE_PALETTE = 1;
 static const uint SHADER_MODE_PROGRAM = 2;
 
-cbuffer Params
+cbuffer Params : register(b0)
 {
 	uint shaderMode;
 	uint frameIndex;
@@ -110,11 +112,11 @@ float4 mainVS(uint vid : SV_VertexID) : SV_POSITION
 float4 mainPS(float4 vpos : SV_POSITION) : SV_TARGET
 {
 	uint2 coord = vpos.xy;
-	
+		
 	// Debug - to show palette!
 	if(vpos.y < 50 && vpos.x < 256)
 	{
-		float4 remap_col = MakeColour(palette[frameIndex][vpos.x]).ToFloat4();
+		float4 remap_col = MakeColour(palette[frameIndex][vpos.x ]).ToFloat4();
 		return float4(remap_col.rgb, 1);
 	}
 	
@@ -142,7 +144,7 @@ float4 mainPS(float4 vpos : SV_POSITION) : SV_TARGET
 }
 
 // TODO Separate this out
-cbuffer BlitParams
+cbuffer BlitRequest : register(b0)
 {
 	int left;
 	int top;
@@ -155,6 +157,11 @@ cbuffer BlitParams
 	uint gpuSpriteID;
 	uint zoom;
 	uint blitterMode;
+	uint remapByteOffset;
+};
+
+cbuffer BlitParamsConstantForPass : register(b1)
+{
 	uint screenResolution;
 	uint blitFrameIndex;
 };
@@ -251,10 +258,10 @@ uint GetColourBrightness(Colour colour)
 	return (rgb_max == 0) ? DEFAULT_BRIGHTNESS : rgb_max;
 }
 
-Colour RealizeBlendedColour(uint2 screenCoord)
+Colour RealizeBlendedColour(uint2 screenCoord, bool readROV)
 {	
-	Colour c = MakeColour(dst_tex[screenCoord]);
-	uint anim = remap_tex[screenCoord];
+	Colour c = MakeColour(readROV ? dst_rov[screenCoord] : dst_tex[screenCoord]);
+	uint anim = readROV ? remap_rov[screenCoord] : remap_tex[screenCoord];
 	
 	if(anim != 0)
 		return AdjustBrightness(LookupColourInPalette(anim), GetColourBrightness(c));
@@ -305,26 +312,40 @@ Colour MakeDark(Colour colour)
 
 uint LoadRemapValue(uint m)
 {
-	uint dword = remap_buffer.Load<uint>(m & ~3);	// Byte address!
+	uint dword = remap_buffer.Load<uint>((m & ~3) + remapByteOffset);	// Byte address!
 	uint byte = dword >> ((m % 4) * 8);
 	return byte & 0xFF;
 }
 
-[RootSignature(RootSig)]
-[numthreads(8,8,1)]
-void BlitCS(uint2 DTid : SV_DispatchThreadID)
+struct BlitOutput
 {
-	uint2 blitDims = GetBlitDimensions();
+	uint dst;
+	uint anim;
+	bool writeDst;
+	bool writeAnim;
+	bool zeroAlpha;
 	
-	if(any(DTid.xy >= blitDims))
-		return;
-		
-	uint2 screenCoord = DTid.xy + uint2(left, top);
+	void SetDst(uint val)
+	{
+		dst = val;
+		writeDst = true;
+	}
+	
+	void SetAnim(uint val)
+	{
+		anim = val;
+		writeAnim = true;
+	}
+};
+
+BlitOutput CalculateOutputs(uint2 DTid, uint2 screenCoord, bool readROV)
+{
+	BlitOutput blitOutput = { 0, 0, false, false, false };
 	
 	if(blitType == SOLID_COLOUR)
 	{
-		dst_tex[screenCoord] = MakeColour(0, 0, 0, 255).data;
-		remap_tex[screenCoord] = colour;
+		blitOutput.SetDst(MakeColour(0, 0, 0, 255).data);
+		blitOutput.SetAnim(colour);
 	}
 	else if(blitType >= SPRITE_OPAQUE)
 	{
@@ -335,41 +356,43 @@ void BlitCS(uint2 DTid : SV_DispatchThreadID)
 		
 		uint m = spriteTexelData.r;
 		uint a = spriteTexelData.g;
+		// TODO RGB
+		blitOutput.zeroAlpha = (a == 0);
 		
-		if(a == 0)
-			return;
+		if(blitOutput.zeroAlpha)
+			return blitOutput;
 		
 		Colour src_px = MakeColour(0, 0, 0, a);
-										
+												
 		switch(blitterMode)
 		{
 			case BM_BLACK_REMAP:	// Done
 			{
-				dst_tex[screenCoord] = MakeColour(0, 0, 0, 255).data;
-				remap_tex[screenCoord] = 0;
+				blitOutput.SetDst(MakeColour(0, 0, 0, 255).data);
+				blitOutput.SetAnim(0);
 			}break;
 			case BM_NORMAL:			// Done?
 			{		
 				if(src_px.Alpha() == 255)
 				{
-					dst_tex[screenCoord] = src_px.data;	// TODO RGB??
-					remap_tex[screenCoord] = m;
+					blitOutput.SetDst(src_px.data);	
+					blitOutput.SetAnim(m);
 				}
 				else
 				{
-					Colour b = RealizeBlendedColour(screenCoord);
+					Colour b = RealizeBlendedColour(screenCoord, readROV);
 					
 					if(m == 0)
-					{
-						dst_tex[screenCoord] = ComposeColourRGBANoCheck(src_px, src_px.Alpha(), b).data;
-						remap_tex[screenCoord] = 0;
+					{						
+						blitOutput.SetDst(ComposeColourRGBANoCheck(src_px, src_px.Alpha(), b).data);	
+						blitOutput.SetAnim(0);
 					}
 					else
 					{
 						Colour remap_col = MakeColour(palette[blitFrameIndex][m]);
-						
-						dst_tex[screenCoord] = ComposeColourPANoCheck(remap_col, src_px.Alpha(), b).data;
-						remap_tex[screenCoord] = m;
+												
+						blitOutput.SetDst(ComposeColourPANoCheck(remap_col, src_px.Alpha(), b).data);	
+						blitOutput.SetAnim(m);
 					}
 				}
 			}break;
@@ -380,30 +403,30 @@ void BlitCS(uint2 DTid : SV_DispatchThreadID)
 				if(src_px.Alpha() == 255)
 				{
 					if(m == 0)
-					{
-						dst_tex[screenCoord] = (blitterMode == BM_CRASH_REMAP) ? MakeDark(src_px).data : src_px.data;
-						remap_tex[screenCoord] = 0;
+					{						
+						blitOutput.SetDst((blitterMode == BM_CRASH_REMAP) ? MakeDark(src_px).data : src_px.data);	
+						blitOutput.SetAnim(0);
 					}
 					else
 					{
 						uint r = LoadRemapValue(m);
 						if(r != 0)
-						{
-							dst_tex[screenCoord] = src_px.data;
-							remap_tex[screenCoord] = r;
+						{							
+							blitOutput.SetDst(src_px.data);	
+							blitOutput.SetAnim(r);
 						}
 					}
 				}
 				else
 				{
-					Colour b = RealizeBlendedColour(screenCoord);
+					Colour b = RealizeBlendedColour(screenCoord, readROV);
 					
 					if(m == 0)
 					{
 						Colour c = MakeColour((blitterMode == BM_CRASH_REMAP) ? MakeDark(src_px).data : src_px.data);
-						
-						dst_tex[screenCoord] = ComposeColourRGBANoCheck(c, src_px.Alpha(), b).data;
-						remap_tex[screenCoord] = 0;
+												
+						blitOutput.SetDst(ComposeColourRGBANoCheck(c, src_px.Alpha(), b).data);	
+						blitOutput.SetAnim(0);
 					}
 					else
 					{
@@ -412,8 +435,9 @@ void BlitCS(uint2 DTid : SV_DispatchThreadID)
 						if(r != 0)
 						{
 							Colour remap_col = MakeColour(palette[blitFrameIndex][r]);
-							dst_tex[screenCoord] = ComposeColourPANoCheck(remap_col, src_px.Alpha(), b).data;
-							remap_tex[screenCoord] = 0;						
+							
+							blitOutput.SetDst(ComposeColourPANoCheck(remap_col, src_px.Alpha(), b).data);	
+							blitOutput.SetAnim(0);							
 						}
 					}
 				}
@@ -422,52 +446,85 @@ void BlitCS(uint2 DTid : SV_DispatchThreadID)
 			{
 				if(src_px.Alpha() == 255)
 				{
-					Colour dst = MakeColour(dst_tex[screenCoord]);
-					uint anim = remap_tex[screenCoord];
+					Colour dst;
+					uint anim;
+					
+					if(readROV)	// Compile time resolvable branch
+					{
+						dst = MakeColour(dst_rov[screenCoord]);
+						anim = remap_rov[screenCoord];
+					}
+					else
+					{
+						dst = MakeColour(dst_tex[screenCoord]);
+						anim = remap_tex[screenCoord];
+					}
 					
 					Colour b = dst;
 					
 					if(anim != 0)
 						b = MakeColour(GetColourBrightness(dst), 0, 0);
 					
-					dst_tex[screenCoord] = MakeTransparent(b, 3, 4).data;
+					blitOutput.SetDst(MakeTransparent(b, 3, 4).data);	
 				}
 				else
 				{
-					Colour b = RealizeBlendedColour(screenCoord);
-					
-					dst_tex[screenCoord] = MakeTransparent(b, (256 * 4 - src_px.Alpha()), 256 * 4).data;
-					remap_tex[screenCoord] = 0;
+					Colour b = RealizeBlendedColour(screenCoord, readROV);
+										
+					blitOutput.SetDst(MakeTransparent(b, (256 * 4 - src_px.Alpha()), 256 * 4).data);	
+					blitOutput.SetAnim(0);
 				}
 			}break;
 			case BM_TRANSPARENT_REMAP:
 			{
-				uint anim = remap_tex[screenCoord];
+				uint anim = readROV ? remap_rov[screenCoord] : remap_tex[screenCoord];
 				
 				if(anim != 0)
-					remap_tex[screenCoord] = LoadRemapValue(anim);
+					blitOutput.SetAnim(LoadRemapValue(anim));
 				else
 				{
 					// A Search?!?!
-					dst_tex[screenCoord] = MakeColour(255, 0, 255, 255).data;
-					remap_tex[screenCoord] = 0;
+					blitOutput.SetDst(MakeColour(255, 0, 255, 255).data);
+					blitOutput.SetAnim(0);
 				}
 			}break;			
 		}
-	}	
+	}
+	
+	return blitOutput;
 }
 
 [RootSignature(RootSig)]
-PS_OUTPUT DrawPS(float4 vpos : SV_POSITION)
+[numthreads(8,8,1)]
+void BlitCS(uint2 DTid : SV_DispatchThreadID)
 {
-	PS_OUTPUT output;
+	uint2 blitDims = GetBlitDimensions();
 	
-	// TODO - restore this if I revert back to using raster for blitting.
+	if(any(DTid.xy >= blitDims))
+		return;
+			
+	uint2 screenCoord = DTid.xy + uint2(left, top);
 	
-	output.dst = 0;
-	output.anim = 0;
+	BlitOutput output = CalculateOutputs(DTid, screenCoord, false);
 	
-	return output;
+	if(output.writeDst)
+		dst_tex[screenCoord] = output.dst;
+	if(output.writeAnim)
+		remap_tex[screenCoord] = output.anim;
+}
+
+[RootSignature(RootSig)]
+void ROVPS(float4 vpos : SV_POSITION)
+{
+	uint2 screenCoord = vpos.xy;
+	uint2 DTid = screenCoord - uint2(left, top);
+	
+	BlitOutput output = CalculateOutputs(DTid, screenCoord, true);
+	
+	if(output.writeDst)
+		dst_rov[screenCoord] = output.dst;
+	if(output.writeAnim)
+		remap_rov[screenCoord] = output.anim;
 }
 
 cbuffer ScrollParams : register(b0)
