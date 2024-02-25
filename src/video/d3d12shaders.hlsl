@@ -352,9 +352,29 @@ void BlitCS(uint2 DTid : SV_DispatchThreadID)
 			case BM_COLOUR_REMAP:
 			case BM_CRASH_REMAP:
 			{
-				// Need the remaps...
-				dst_tex[screenCoord] = MakeColour(255, 0, 0, 255).data;
-				remap_tex[screenCoord] = 0;
+				// TODO Need the remaps... to actualy remap
+				if(src_px.Alpha() == 255)
+				{
+					dst_tex[screenCoord] = src_px.data;	// TODO RGB??
+					remap_tex[screenCoord] = m;
+				}
+				else
+				{
+					Colour b = RealizeBlendedColour(screenCoord);
+					
+					if(m == 0)
+					{
+						dst_tex[screenCoord] = ComposeColourRGBANoCheck(src_px, src_px.Alpha(), b).data;
+						remap_tex[screenCoord] = 0;
+					}
+					else
+					{
+						Colour remap_col = MakeColour(palette[blitFrameIndex][m]);
+						
+						dst_tex[screenCoord] = ComposeColourPANoCheck(remap_col, src_px.Alpha(), b).data;
+						remap_tex[screenCoord] = m;
+					}
+				}
 			}break;
 			case BM_TRANSPARENT:
 			{
