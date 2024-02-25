@@ -65,6 +65,7 @@ struct BlitRequest {
 	uint32_t gpuSpriteID;
 	ZoomLevel zoom;
 	uint blitterMode;	// BlitterMode
+	uint remapByteOffset;
 };
 
 struct SpriteResourceSet {
@@ -112,9 +113,14 @@ private:
 	uint64_t nextFenceValue = 0;
 	HANDLE fenceEvent;
 
+	static const uint SIZE_OF_REMAP_BUFFER_UPLOAD_SPACE = 4 * 1024 * 1024;
+
 	ComPtr<ID3D12Resource> vid_texture_upload[SWAP_CHAIN_BACK_BUFFER_COUNT];
 	ComPtr<ID3D12Resource> palette_texture_upload[SWAP_CHAIN_BACK_BUFFER_COUNT];
 	ComPtr<ID3D12Resource> anim_texture_upload[SWAP_CHAIN_BACK_BUFFER_COUNT];
+
+	ComPtr<ID3D12Resource> remap_buffer_upload[SWAP_CHAIN_BACK_BUFFER_COUNT];
+	void *remap_buffer_mapped[SWAP_CHAIN_BACK_BUFFER_COUNT];
 
 	ComPtr<ID3D12Resource> vid_texture_default;
 	ComPtr<ID3D12Resource> anim_texture_default;
@@ -129,6 +135,7 @@ private:
 	bool paletteIsDirty = false;
 
 	uint surfacePitchInPixels;
+	uint remapBufferSpaceUsedThisFrame = 0;
 
 	HANDLE frameEvents[SWAP_CHAIN_BACK_BUFFER_COUNT];
 	uint64_t frameEndValues[SWAP_CHAIN_BACK_BUFFER_COUNT] = {};

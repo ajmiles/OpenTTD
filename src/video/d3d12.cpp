@@ -329,6 +329,7 @@ void D3D12Backend::Present()
 	HRESULT hr = swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
 
 	frameNumber++;
+	remapBufferSpaceUsedThisFrame = 0;
 
 	currentFrameIndex = swapChain->GetCurrentBackBufferIndex();
 	WaitForSingleObject(frameEvents[currentFrameIndex], INFINITE);
@@ -500,7 +501,7 @@ bool D3D12Backend::Resize(int w, int h, bool force)
 			anim_texture_upload[i]->SetName(str);
 
 			resDesc.Width = 256 * 4;
-			hr = device->CreateCommittedResource(&uploadProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+			hr = device->CreateCommittedResource(&uploadProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE,
 													nullptr, IID_PPV_ARGS(palette_texture_upload[i].ReleaseAndGetAddressOf()));
 
 			D3D12_SHADER_RESOURCE_VIEW_DESC paletteSRVDesc = {};
@@ -509,6 +510,12 @@ bool D3D12Backend::Resize(int w, int h, bool force)
 			paletteSRVDesc.Buffer.NumElements = 256;
 			paletteSRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 			device->CreateShaderResourceView(palette_texture_upload[i].Get(), &paletteSRVDesc, GetDescriptor(Descriptors::PALETTE_TEXTURE_0, i));
+
+
+			resDesc.Width = SIZE_OF_REMAP_BUFFER_UPLOAD_SPACE;
+			hr = device->CreateCommittedResource(&uploadProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE,
+													nullptr, IID_PPV_ARGS(remap_buffer_upload[i].ReleaseAndGetAddressOf()));
+			remap_buffer_upload[i]->Map(0, nullptr, &remap_buffer_mapped[i]);
 		}		
 	}
 
@@ -544,6 +551,7 @@ void D3D12Backend::FlushSpriteBuffer()
 		commandList->SetComputeRootDescriptorTable(2, firstSpriteHandle);
 
 		uint screenResolution = (_screen.width | (_screen.height << 16));
+		D3D12_GPU_VIRTUAL_ADDRESS baseRemapAddress = remap_buffer_upload[currentFrameIndex]->GetGPUVirtualAddress();
 
 		for (int i = 0; i < blitRequests.size(); i++) {
 			BlitRequest &req = blitRequests[i];
@@ -552,6 +560,7 @@ void D3D12Backend::FlushSpriteBuffer()
 				req.colour, req.blitType, req.gpuSpriteID, req.zoom, req.blitterMode, screenResolution, currentFrameIndex };
 
 			commandList->SetComputeRoot32BitConstants(0, ARRAYSIZE(arr), arr, 0);
+			commandList->SetComputeRootShaderResourceView(3, baseRemapAddress + req.remapByteOffset);
 
 			uint width = req.right - req.left + 1;
 			uint height = req.bottom - req.top + 1;
@@ -763,7 +772,28 @@ void D3D12Backend::EnqueueSpriteBlit(SpriteBlitRequest *request)
 		return;
 
 	BlitRequest req = { request->left, request->top, request->right, request->bottom, request->skip_left, request->skip_top, 0,
-		BlitType::SPRITE_ALPHA, request->gpuSpriteID, request->zoom, request->blitterMode };
+		BlitType::SPRITE_ALPHA, request->gpuSpriteID, request->zoom, request->blitterMode, 0 };
+
+	// TODO - I really need BlitterMode here...
+	if (request->blitterMode == 1 || request->blitterMode == 3 || request->blitterMode == 4 || request->blitterMode == 5) {
+
+		// Allocate some space for the remap table
+		const uint spaceRequired = 256;
+
+		if (SIZE_OF_REMAP_BUFFER_UPLOAD_SPACE - remapBufferSpaceUsedThisFrame > spaceRequired) {
+
+			uint currentFrameIndex = swapChain->GetCurrentBackBufferIndex();
+			char *dest = (char*)remap_buffer_mapped[currentFrameIndex];
+			memcpy(dest + remapBufferSpaceUsedThisFrame, request->remap, spaceRequired);
+
+			req.remapByteOffset = remapBufferSpaceUsedThisFrame;
+
+			remapBufferSpaceUsedThisFrame += spaceRequired;
+		}
+		else {
+			__debugbreak();
+		}
+	}
 
 	blitRequests.push_back(req);
 }

@@ -95,7 +95,7 @@ void Blitter_40bppAnimGPU::Draw(Blitter::BlitterParams *bp, BlitterMode mode, Zo
 	request.skip_top = bp->skip_top;
 	request.zoom = zoom;
 	request.blitterMode = mode;
-
+	request.remap = bp->remap;
 
 	char str[256];
 	sprintf_s(str, "Draw Sprite at %u, %u\n", request.left, request.top);

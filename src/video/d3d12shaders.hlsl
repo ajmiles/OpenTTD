@@ -1,4 +1,4 @@
-#define RootSig "RootConstants(b0, num32bitconstants=13), DescriptorTable(UAV(u0, numdescriptors=3, flags = DESCRIPTORS_VOLATILE), SRV(t0, numdescriptors=2)), DescriptorTable(SRV(t0, space=1, numdescriptors=unbounded))"
+#define RootSig "RootConstants(b0, num32bitconstants=13), DescriptorTable(UAV(u0, numdescriptors=3, flags = DESCRIPTORS_VOLATILE), SRV(t0, numdescriptors=2)), DescriptorTable(SRV(t0, space=1, numdescriptors=unbounded)), SRV(t2)"
 
 enum BlitType
 {
@@ -70,6 +70,7 @@ RWTexture2D<float4> colour_tex : register(u0);
 RWTexture2D<uint> remap_tex : register(u1);
 RWTexture2D<uint> dst_tex : register(u2);
 Buffer<uint> palette[2] : register(t0);
+ByteAddressBuffer remap_buffer : register(t2);
 
 Texture2D<uint2> spriteTextures[] : register(t0,space1);
 
@@ -291,6 +292,24 @@ Colour MakeTransparent(Colour colour, uint nom, uint denom = 256)
 	return MakeColour(r * nom / denom, g * nom / denom, b * nom / denom);
 }
 
+uint MakeDark(uint r, uint g, uint b)
+{
+	return ((r * 13063) + (g * 25647) + (b * 4981)) / 65536;
+}
+
+Colour MakeDark(Colour colour)
+{
+	uint d = MakeDark(colour.Red(), colour.Green(), colour.Blue());
+	return MakeColour(d, d, d);
+}
+
+uint LoadRemapValue(uint m)
+{
+	uint dword = remap_buffer.Load<uint>(m & ~3);	// Byte address!
+	uint byte = dword >> ((m % 4) * 8);
+	return byte & 0xFF;
+}
+
 [RootSignature(RootSig)]
 [numthreads(8,8,1)]
 void BlitCS(uint2 DTid : SV_DispatchThreadID)
@@ -321,10 +340,8 @@ void BlitCS(uint2 DTid : SV_DispatchThreadID)
 			return;
 		
 		Colour src_px = MakeColour(0, 0, 0, a);
-		
-		uint bm = blitterMode;
-								
-		switch(bm)
+										
+		switch(blitterMode)
 		{
 			case BM_BLACK_REMAP:	// Done
 			{
@@ -359,11 +376,23 @@ void BlitCS(uint2 DTid : SV_DispatchThreadID)
 			case BM_COLOUR_REMAP:
 			case BM_CRASH_REMAP:
 			{
-				// TODO Need the remaps... to actualy remap
+				// TODO Need the remaps... to actually remap
 				if(src_px.Alpha() == 255)
 				{
-					dst_tex[screenCoord] = src_px.data;	// TODO RGB??
-					remap_tex[screenCoord] = m;
+					if(m == 0)
+					{
+						dst_tex[screenCoord] = (blitterMode == BM_CRASH_REMAP) ? MakeDark(src_px).data : src_px.data;
+						remap_tex[screenCoord] = 0;
+					}
+					else
+					{
+						uint r = LoadRemapValue(m);
+						if(r != 0)
+						{
+							dst_tex[screenCoord] = src_px.data;
+							remap_tex[screenCoord] = r;
+						}
+					}
 				}
 				else
 				{
@@ -371,15 +400,21 @@ void BlitCS(uint2 DTid : SV_DispatchThreadID)
 					
 					if(m == 0)
 					{
-						dst_tex[screenCoord] = ComposeColourRGBANoCheck(src_px, src_px.Alpha(), b).data;
+						Colour c = MakeColour((blitterMode == BM_CRASH_REMAP) ? MakeDark(src_px).data : src_px.data);
+						
+						dst_tex[screenCoord] = ComposeColourRGBANoCheck(c, src_px.Alpha(), b).data;
 						remap_tex[screenCoord] = 0;
 					}
 					else
 					{
-						Colour remap_col = MakeColour(palette[blitFrameIndex][m]);
+						uint r = LoadRemapValue(m);
 						
-						dst_tex[screenCoord] = ComposeColourPANoCheck(remap_col, src_px.Alpha(), b).data;
-						remap_tex[screenCoord] = m;
+						if(r != 0)
+						{
+							Colour remap_col = MakeColour(palette[blitFrameIndex][r]);
+							dst_tex[screenCoord] = ComposeColourPANoCheck(remap_col, src_px.Alpha(), b).data;
+							remap_tex[screenCoord] = 0;						
+						}
 					}
 				}
 			}break;
@@ -407,8 +442,16 @@ void BlitCS(uint2 DTid : SV_DispatchThreadID)
 			}break;
 			case BM_TRANSPARENT_REMAP:
 			{
-				dst_tex[screenCoord] = MakeColour(0, 0, 255, 255).data;
-				remap_tex[screenCoord] = 0;
+				uint anim = remap_tex[screenCoord];
+				
+				if(anim != 0)
+					remap_tex[screenCoord] = LoadRemapValue(anim);
+				else
+				{
+					// A Search?!?!
+					dst_tex[screenCoord] = MakeColour(255, 0, 255, 255).data;
+					remap_tex[screenCoord] = 0;
+				}
 			}break;			
 		}
 	}	
