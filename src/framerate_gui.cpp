@@ -42,7 +42,7 @@ static std::vector<TimingMeasurement> _sound_perf_measurements;
 namespace {
 
 	/** Number of data points to keep in buffer for each performance measurement */
-	const int NUM_FRAMERATE_POINTS = 512;
+	const int NUM_FRAMERATE_POINTS = 1024;
 	/** %Units a second is divided into in performance measurements */
 	const TimingMeasurement TIMESTAMP_PRECISION = 1000000;
 
@@ -176,7 +176,9 @@ namespace {
 			}
 
 			if (total == 0 || count == 0) return 0;
-			return (double)count * TIMESTAMP_PRECISION / total;
+			double rate = (double)count * TIMESTAMP_PRECISION / total;
+
+			return rate;
 		}
 	};
 

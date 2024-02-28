@@ -53,24 +53,6 @@ enum Descriptors {
 	DESCRIPTOR_COUNT = SPRITE_START + (MAX_SPRITES_SUPPORTED * ZOOM_LVL_END)
 };
 
-
-
-
-struct BlitRequest {
-	int left;
-	int top;
-	int right;
-	int bottom;
-	int skip_left;
-	int skip_top;
-	uint colour;
-	BlitType blitType;
-	uint32_t gpuSpriteID;
-	uint zoom;
-	uint blitterMode;	// BlitterMode
-	uint remapByteOffset;
-};
-
 struct SpriteResourceSet {
 	ID3D12Resource *spriteResources[ZOOM_LVL_END];
 };
@@ -116,7 +98,7 @@ private:
 
 	
 
-	static const uint SIZE_OF_REMAP_BUFFER_UPLOAD_SPACE = 1 * 1024 * 1024;	// TODO: Use a growable reserved resource
+	static const uint SIZE_OF_REMAP_BUFFER_UPLOAD_SPACE = 64 * 1024;	// TODO: Use a growable reserved resource
 
 	ComPtr<ID3D12Resource> palette_texture_upload[SWAP_CHAIN_BACK_BUFFER_COUNT];
 	ComPtr<ID3D12Resource> remap_buffer_upload[SWAP_CHAIN_BACK_BUFFER_COUNT];
@@ -128,6 +110,10 @@ private:
 	ComPtr<ID3D12Resource> backup_anim_texture_default_GPUBlitter;
 
 	ComPtr<ID3D12Resource> swapChainBuffers[SWAP_CHAIN_BACK_BUFFER_COUNT];
+
+	static const uint MAX_BLIT_REQUESTS_PER_FRAME = 1 * 1024 * 1024;
+	ComPtr<ID3D12Resource> blitRequestUploadBuffer[SWAP_CHAIN_BACK_BUFFER_COUNT];
+	uint blitRequestsAddedThisFrame = 0;
 
 	ComPtr<ID3D12QueryHeap> timestampQueryHeap;
 	ComPtr<ID3D12Resource> queryReadbackBuffer;
@@ -198,6 +184,8 @@ private:
 
 		return swapChain->GetCurrentBackBufferIndex();
 	}
+
+	static const DXGI_FORMAT SWAP_CHAIN_FORMAT = DXGI_FORMAT_R10G10B10A2_UNORM;
 
 public:
 	/** Get singleton instance of this class. */

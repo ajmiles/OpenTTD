@@ -112,11 +112,11 @@ void VideoDriver::Tick()
 		}
 	}
 
-	auto now = std::chrono::steady_clock::now();
-	if (this->HasGUI() && now >= this->next_draw_tick) {
+	//auto now = std::chrono::steady_clock::now();
+	if (this->HasGUI()) {// && now >= this->next_draw_tick) {
 		this->next_draw_tick += this->GetDrawInterval();
 		/* Avoid next_draw_tick getting behind more and more if it cannot keep up. */
-		if (this->next_draw_tick < now - ALLOWED_DRIFT * this->GetDrawInterval()) this->next_draw_tick = now;
+		//if (this->next_draw_tick < now - ALLOWED_DRIFT * this->GetDrawInterval()) this->next_draw_tick = now;
 
 		/* Locking video buffer can block (especially with vsync enabled), do it before taking game state lock. */
 		this->LockVideoBuffer();
@@ -171,15 +171,18 @@ void VideoDriver::Tick()
 void VideoDriver::SleepTillNextTick()
 {
 	auto next_tick = this->next_draw_tick;
-	auto now = std::chrono::steady_clock::now();
+	//auto now = std::chrono::steady_clock::now();
 
 	if (!this->is_game_threaded) {
 		next_tick = min(next_tick, this->next_game_tick);
 	}
 
-	if (next_tick > now) {
-		std::this_thread::sleep_for(next_tick - now);
-	}
+	//while (std::chrono::steady_clock::now() < next_tick) {
+	//	_YIELD_PROCESSOR();
+	//}
+	//if (next_tick > now) {
+		//std::this_thread::sleep_for(next_tick - now);
+	//}
 }
 
 /**

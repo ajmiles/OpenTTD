@@ -1,6 +1,6 @@
 #include "cpp_hlsl_shared.h"
 
-#define RootSig "RootConstants(b0, num32bitconstants=12), DescriptorTable(UAV(u0, numdescriptors=4, flags = DESCRIPTORS_VOLATILE), SRV(t0, numdescriptors=3)), DescriptorTable(SRV(t0, space=1, numdescriptors=unbounded, flags = DESCRIPTORS_VOLATILE)), SRV(t3), RootConstants(b1, num32bitconstants=2), UAV(u4)"
+#define RootSig "RootConstants(b0, num32bitconstants=12), DescriptorTable(UAV(u0, numdescriptors=4), SRV(t0, numdescriptors=3)), DescriptorTable(SRV(t0, space=1, numdescriptors=unbounded, flags = DESCRIPTORS_VOLATILE)), SRV(t3), RootConstants(b1, num32bitconstants=2), UAV(u4), SRV(t4)"
 
 // Copy-paste of the one in base.hpp for blitters
 /** The modes of blitting we can do. */
@@ -15,8 +15,6 @@ enum BlitterMode {
 
 static const uint PALETTE_TO_TRANSPARENT      = 802;
 static const uint PALETTE_NEWSPAPER           = 803;
-
-
 
 struct Colour
 {
@@ -79,6 +77,7 @@ RasterizerOrderedTexture2D<uint> backup_dst_rov : register(u3);
 
 Buffer<uint> palette[3] : register(t0);
 ByteAddressBuffer remap_buffer : register(t3);
+StructuredBuffer<BlitRequest> blitRequestBuffer : register(t4);
 
 Texture2D<uint2> spriteTextures[] : register(t0,space1);
 
@@ -145,21 +144,12 @@ float4 mainPS(float4 vpos : SV_POSITION) : SV_TARGET
 	}
 }
 
+
+
 // TODO Separate this out
-cbuffer BlitRequest : register(b0)
+cbuffer BlitRequestCBV : register(b0)
 {
-	int left;
-	int top;
-	int right;
-	int bottom;
-	int skip_left;
-	int skip_top;
-	uint colour;
-	BlitType blitType;
-	uint gpuSpriteID;
-	uint zoom;
-	uint blitterMode;
-	uint remapByteOffset;
+	BlitRequest req;
 };
 
 cbuffer BlitParamsConstantForPass : register(b1)
@@ -168,10 +158,18 @@ cbuffer BlitParamsConstantForPass : register(b1)
 	uint blitFrameIndex;
 };
 
-uint2 GetBlitDimensions()
+#if SEPARATE_DRAWS
+BlitRequest GetBlitRequest(uint reqIndex)
 {
-	return uint2(right - left, bottom - top) + 1;
+	return req;
 }
+#else
+BlitRequest GetBlitRequest(uint reqIndex)
+{
+	return blitRequestBuffer[reqIndex];
+}	
+#endif
+
 
 float2 GetScreenResolution()
 {
@@ -179,17 +177,21 @@ float2 GetScreenResolution()
 }
 
 [RootSignature(RootSig)]
-float4 DrawVS(uint vid : SV_VertexID, uint instanceID : SV_InstanceID) : SV_POSITION
+float4 DrawVS(uint vid : SV_VertexID, uint instanceID : SV_InstanceID, out uint reqIndex : REQUEST_INDEX) : SV_POSITION
 {
-	if(blitType != LINE)
+	reqIndex = instanceID;
+	
+	BlitRequest req = GetBlitRequest(instanceID);
+	
+	if(req.blitType != LINE)
 	{
 		uint x = (vid >= 1 && vid <= 3) ? 1 : 0;
 		uint y = (vid >= 2 && vid <= 4) ? 1 : 0;
 		
-		uint2 blitDims = GetBlitDimensions();
+		uint2 blitDims = req.GetBlitDimensions();
 		
 		uint2 unitSquare = uint2(x, y);
-		float2 scaledTranslationRectF = (unitSquare * blitDims + uint2(left, top));
+		float2 scaledTranslationRectF = (unitSquare * blitDims + req.GetXYOffset());
 		
 		scaledTranslationRectF = scaledTranslationRectF / (GetScreenResolution() * 0.5f);
 		scaledTranslationRectF.y = -scaledTranslationRectF.y;
@@ -199,13 +201,13 @@ float4 DrawVS(uint vid : SV_VertexID, uint instanceID : SV_InstanceID) : SV_POSI
 	}
 	else
 	{
-		int width = skip_left;
-		int dash = skip_top;
+		int width = req.skip_left;
+		int dash = req.skip_top;
 		
-		int x = left;
-		int y = top;
-		int x2 = right;
-		int y2 = bottom;
+		int x = req.left;
+		int y = req.top;
+		int x2 = req.right;
+		int y2 = req.bottom;
 		
 		float2 v0 = float2(x, y);
 		float2 v1 = float2(x2, y2);
@@ -352,7 +354,7 @@ Colour MakeDark(Colour colour)
 	return MakeColour(d, d, d);
 }
 
-uint LoadRemapValue(uint m)
+uint LoadRemapValue(uint m, uint remapByteOffset)
 {
 	uint dword = remap_buffer.Load<uint>((m & ~3) + remapByteOffset);	// Byte address!
 	uint byte = dword >> ((m % 4) * 8);
@@ -380,18 +382,18 @@ struct BlitOutput
 	}
 };
 
-BlitOutput CalculateOutputs(uint2 DTid, uint2 screenCoord, bool readROV)
+BlitOutput CalculateOutputs(uint2 DTid, uint2 screenCoord, BlitRequest req, bool readROV)
 {
 	BlitOutput blitOutput = { 0, 0, false, false, false };
 	
-	if(blitType == RECTANGLE || blitType == LINE)
+	if(req.blitType == RECTANGLE || req.blitType == LINE)
 	{
 		blitOutput.SetDst(MakeColour(0, 0, 0, 255).data);
-		blitOutput.SetAnim(colour);
+		blitOutput.SetAnim(req.colour);
 	}
-	else if(blitType == COLOUR_MAPPING_RECTANGLE)
+	else if(req.blitType == COLOUR_MAPPING_RECTANGLE)
 	{
-		uint pal = blitterMode;	// TODO
+		uint pal = req.blitterMode;	// TODO
 
 		if(pal == PALETTE_TO_TRANSPARENT)
 		{
@@ -416,11 +418,11 @@ BlitOutput CalculateOutputs(uint2 DTid, uint2 screenCoord, bool readROV)
 			//blitOutput.SetAnim(0);
 		}
 	}
-	else if(blitType == SPRITE)
+	else if(req.blitType == SPRITE)
 	{
-		uint2 skipAmount = uint2(skip_left, skip_top);	
+		uint2 skipAmount = req.GetSkipOffset();	
 		uint2 spriteLocalCoord = DTid + skipAmount;
-		uint textureID = (gpuSpriteID * 6) + zoom;
+		uint textureID = (req.gpuSpriteID * 6) + req.zoom;
 		uint2 spriteTexelData = spriteTextures[textureID][spriteLocalCoord];
 		
 		uint m = spriteTexelData.r;
@@ -445,11 +447,9 @@ BlitOutput CalculateOutputs(uint2 DTid, uint2 screenCoord, bool readROV)
 		if(blitOutput.zeroAlpha)
 			return blitOutput;
 		
-		
-		
 		Colour src_px = MakeColour(r, g, b, a);
 												
-		switch(blitterMode)
+		switch(req.blitterMode)
 		{
 			case BM_BLACK_REMAP:	// Done
 			{
@@ -489,12 +489,12 @@ BlitOutput CalculateOutputs(uint2 DTid, uint2 screenCoord, bool readROV)
 				{
 					if(m == 0)
 					{						
-						blitOutput.SetDst((blitterMode == BM_CRASH_REMAP) ? MakeDark(src_px).data : src_px.data);	
+						blitOutput.SetDst((req.blitterMode == BM_CRASH_REMAP) ? MakeDark(src_px).data : src_px.data);	
 						blitOutput.SetAnim(0);
 					}
 					else
 					{
-						uint r = LoadRemapValue(m);
+						uint r = LoadRemapValue(m, req.remapByteOffset);
 						if(r != 0)
 						{							
 							blitOutput.SetDst(src_px.data);	
@@ -508,14 +508,14 @@ BlitOutput CalculateOutputs(uint2 DTid, uint2 screenCoord, bool readROV)
 					
 					if(m == 0)
 					{
-						Colour c = MakeColour((blitterMode == BM_CRASH_REMAP) ? MakeDark(src_px).data : src_px.data);
+						Colour c = MakeColour((req.blitterMode == BM_CRASH_REMAP) ? MakeDark(src_px).data : src_px.data);
 												
 						blitOutput.SetDst(ComposeColourRGBANoCheck(c, src_px.Alpha(), b).data);	
 						blitOutput.SetAnim(0);
 					}
 					else
 					{
-						uint r = LoadRemapValue(m);
+						uint r = LoadRemapValue(m, req.remapByteOffset);
 						
 						if(r != 0)
 						{
@@ -565,7 +565,7 @@ BlitOutput CalculateOutputs(uint2 DTid, uint2 screenCoord, bool readROV)
 				uint anim = readROV ? remap_rov[screenCoord] : remap_tex[screenCoord];
 				
 				if(anim != 0)
-					blitOutput.SetAnim(LoadRemapValue(anim));
+					blitOutput.SetAnim(LoadRemapValue(anim, req.remapByteOffset));
 				else
 				{
 					// A Search?!?!
@@ -578,7 +578,7 @@ BlitOutput CalculateOutputs(uint2 DTid, uint2 screenCoord, bool readROV)
 	
 	return blitOutput;
 }
-
+/*
 [RootSignature(RootSig)]
 [numthreads(8,8,1)]
 void BlitCS(uint2 DTid : SV_DispatchThreadID)
@@ -596,27 +596,29 @@ void BlitCS(uint2 DTid : SV_DispatchThreadID)
 		dst_tex[screenCoord] = output.dst;
 	if(output.writeAnim)
 		remap_tex[screenCoord] = output.anim;
-}
+}*/
 
 [RootSignature(RootSig)]
-void ROVPS(float4 vpos : SV_POSITION)
+void ROVPS(float4 vpos : SV_POSITION, uint reqIndex : REQUEST_INDEX)
 {
+	BlitRequest req = GetBlitRequest(reqIndex);
+	
 	uint2 screenCoord = vpos.xy;
 	
-	if(blitType == COPY_TO_BACKUP)
+	if(req.blitType == COPY_TO_BACKUP)
 	{
 		backup_dst_rov[screenCoord] = dst_rov[screenCoord];
 		backup_remap_rov[screenCoord] = remap_rov[screenCoord];
 	}
-	else if(blitType == COPY_FROM_BACKUP)		
+	else if(req.blitType == COPY_FROM_BACKUP)		
 	{
 		dst_rov[screenCoord] = backup_dst_rov[screenCoord];
 		remap_rov[screenCoord] = backup_remap_rov[screenCoord]; 
 	}
 	else
 	{
-		uint2 DTid = screenCoord - uint2(left, top);
-		BlitOutput output = CalculateOutputs(DTid, screenCoord, true);
+		uint2 DTid = screenCoord - req.GetXYOffset();
+		BlitOutput output = CalculateOutputs(DTid, screenCoord, req, true);
 		
 		if(output.writeDst)
 			dst_rov[screenCoord] = output.dst;

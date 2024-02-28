@@ -171,7 +171,7 @@ const char *D3D12Backend::Init()
 	psoDesc.PS = { g_mainPS, sizeof(g_mainPS) };
 	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
 	psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
-	psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+	psoDesc.RTVFormats[0] = SWAP_CHAIN_FORMAT;
 	psoDesc.SampleDesc.Count = 1;
 	psoDesc.SampleMask = 1;
 	psoDesc.VS = { g_mainVS, sizeof(g_mainVS) };
@@ -211,6 +211,9 @@ const char *D3D12Backend::Init()
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	hr = device->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(srvHeap.ReleaseAndGetAddressOf()));
 
+	rtvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+	srvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
 	paletteSurface = MallocT<uint>(256);
 
 	// Timestamp queries
@@ -225,6 +228,39 @@ const char *D3D12Backend::Init()
 		hr = device->CreateCommittedResource(&readbackProps, D3D12_HEAP_FLAG_NONE, &queryReadbackDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(queryReadbackBuffer.ReleaseAndGetAddressOf()));
 
 		commandQueue->GetTimestampFrequency(&gpuTimestampFrequency);
+	}
+
+
+	for (int i = 0; i < SWAP_CHAIN_BACK_BUFFER_COUNT; i++) {
+
+		// Upload Buffers
+		{
+			D3D12_HEAP_PROPERTIES uploadProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+
+			D3D12_RESOURCE_DESC resDesc = CD3DX12_RESOURCE_DESC::Buffer(256 * 4);
+			HRESULT hr = device->CreateCommittedResource(&uploadProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE,
+													nullptr, IID_PPV_ARGS(palette_texture_upload[i].ReleaseAndGetAddressOf()));
+
+			D3D12_SHADER_RESOURCE_VIEW_DESC paletteSRVDesc = {};
+			paletteSRVDesc.Format = DXGI_FORMAT_R32_UINT;
+			paletteSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+			paletteSRVDesc.Buffer.NumElements = 256;
+			paletteSRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			device->CreateShaderResourceView(palette_texture_upload[i].Get(), &paletteSRVDesc, GetDescriptor(Descriptors::PALETTE_TEXTURE_0, i));
+
+
+			resDesc.Width = SIZE_OF_REMAP_BUFFER_UPLOAD_SPACE;
+			hr = device->CreateCommittedResource(&uploadProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE,
+													nullptr, IID_PPV_ARGS(remap_buffer_upload[i].ReleaseAndGetAddressOf()));
+			remap_buffer_upload[i]->Map(0, nullptr, &remap_buffer_mapped[i]);
+
+
+			D3D12_RESOURCE_DESC blitReqDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(BlitRequest) * MAX_BLIT_REQUESTS_PER_FRAME);
+
+			hr = device->CreateCommittedResource(&uploadProps, D3D12_HEAP_FLAG_NONE, &blitReqDesc, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE,
+													nullptr, IID_PPV_ARGS(blitRequestUploadBuffer[i].ReleaseAndGetAddressOf()));
+			blitRequestUploadBuffer[i]->SetName(L"Blit Request Upload Buffer");
+		}
 	}
 
 	ResetRecording();
@@ -291,7 +327,7 @@ HRESULT D3D12Backend::CreateOrResizeSwapchain(int w, int h, bool force, HWND hwn
 		swapChainDesc.BufferCount = SWAP_CHAIN_BACK_BUFFER_COUNT;
 		swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 		swapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;	// TODO: Check tearing is supported
-		swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		swapChainDesc.Format = SWAP_CHAIN_FORMAT;
 		swapChainDesc.Height = h;
 		swapChainDesc.SampleDesc.Count = 1;
 		swapChainDesc.Scaling = DXGI_SCALING_STRETCH;
@@ -326,9 +362,6 @@ HRESULT D3D12Backend::CreateOrResizeSwapchain(int w, int h, bool force, HWND hwn
 			return hr;
 		}
 	}
-
-	rtvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-	srvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
 	for (int i = 0; i < SWAP_CHAIN_BACK_BUFFER_COUNT; i++) {
 		swapChain->GetBuffer(i, IID_PPV_ARGS(swapChainBuffers[i].GetAddressOf()));
@@ -400,6 +433,7 @@ void D3D12Backend::Present()
 
 	frameIndex = CurrentFrameIndex();
 
+	blitRequestsAddedThisFrame = 0;
 	remapBufferSpaceUsedThisFrame = 0;
 	remapBufferCache.clear();
 
@@ -438,9 +472,9 @@ void D3D12Backend::Present()
 
 	if (seconds > 1.0f) {
 
-		//char str[256];
-		//sprintf_s(str, "FPS: %u\n", frames);
-		//OutputDebugStringA(str);
+		char str[256];
+		sprintf_s(str, "FPS: %u\n", frames);
+		OutputDebugStringA(str);
 
 		frames = 0;
 		start = now;
@@ -554,36 +588,6 @@ bool D3D12Backend::Resize(int w, int h, bool force)
 		device->CreateRenderTargetView(anim_texture_default_GPUBlitter.Get(), nullptr, rtvHandle);
 	}
 
-	for (int i = 0; i < SWAP_CHAIN_BACK_BUFFER_COUNT; i++) {
-		
-		// Upload Buffers
-		{
-			D3D12_RESOURCE_DESC resDesc = {};
-			resDesc.DepthOrArraySize = resDesc.MipLevels = resDesc.SampleDesc.Count = 1;
-			resDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-			resDesc.Format = DXGI_FORMAT_UNKNOWN;
-			resDesc.Height = 1;
-			resDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-			resDesc.Width = 256 * 4;
-
-			HRESULT hr = device->CreateCommittedResource(&uploadProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE,
-													nullptr, IID_PPV_ARGS(palette_texture_upload[i].ReleaseAndGetAddressOf()));
-			
-			D3D12_SHADER_RESOURCE_VIEW_DESC paletteSRVDesc = {};
-			paletteSRVDesc.Format = DXGI_FORMAT_R32_UINT;
-			paletteSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-			paletteSRVDesc.Buffer.NumElements = 256;
-			paletteSRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-			device->CreateShaderResourceView(palette_texture_upload[i].Get(), &paletteSRVDesc, GetDescriptor(Descriptors::PALETTE_TEXTURE_0, i));
-
-
-			resDesc.Width = SIZE_OF_REMAP_BUFFER_UPLOAD_SPACE;
-			hr = device->CreateCommittedResource(&uploadProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE,
-													nullptr, IID_PPV_ARGS(remap_buffer_upload[i].ReleaseAndGetAddressOf()));
-			remap_buffer_upload[i]->Map(0, nullptr, &remap_buffer_mapped[i]);
-		}		
-	}
-
 	/* Set new viewport. */
 	_screen.height = h;
 	_screen.width = w;
@@ -669,7 +673,8 @@ void D3D12Backend::FlushSpriteBuffer()
 		commandList->SetGraphicsRootDescriptorTable(2, firstSpriteHandle);
 		commandList->SetGraphicsRootShaderResourceView(3, baseRemapAddress);
 		commandList->SetGraphicsRoot32BitConstants(4, ARRAYSIZE(passConstants), passConstants, 0);
-		
+
+#if defined(SEPARATE_DRAWS)
 		UINT numDwordsToSetForRequest = sizeof(BlitRequest) / sizeof(uint);
 
 		for (int i = 0; i < blitRequests.size(); i++) {
@@ -678,6 +683,21 @@ void D3D12Backend::FlushSpriteBuffer()
 			commandList->SetGraphicsRoot32BitConstants(0, numDwordsToSetForRequest, &req, 0);
 			commandList->DrawInstanced(6, 1, 0, 0);
 		}
+#else
+		if (blitRequestsAddedThisFrame + blitRequests.size() > MAX_BLIT_REQUESTS_PER_FRAME) {
+			__debugbreak();
+		}
+
+		// Upload all the blit requests
+		BlitRequest *dst;
+		blitRequestUploadBuffer[frameIndex]->Map(0, nullptr, (void **)&dst);
+		memcpy(dst + blitRequestsAddedThisFrame, blitRequests.data(), sizeof(BlitRequest) * blitRequests.size());
+
+		commandList->SetGraphicsRootShaderResourceView(6, blitRequestUploadBuffer[frameIndex]->GetGPUVirtualAddress() + (sizeof(BlitRequest) * blitRequestsAddedThisFrame));
+		commandList->DrawInstanced(6, (UINT)blitRequests.size(), 0, 0);
+
+		blitRequestsAddedThisFrame += blitRequests.size();		
+#endif
 	}
 
 	size_t numRequests = blitRequests.size();
@@ -868,6 +888,9 @@ void D3D12Backend::EnqueueDrawLine(int x, int y, int x2, int y2, uint8_t colour,
 
 void D3D12Backend::EnqueueSpriteBlit(SpriteBlitRequest *request)
 {
+	if (request->left < 0 || request->top < 0)
+		__debugbreak();
+
 	if (spriteResources[request->gpuSpriteID].spriteResources[request->zoom] == nullptr)
 		return;
 
