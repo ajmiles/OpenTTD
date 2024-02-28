@@ -34,7 +34,7 @@ public:
 	Sprite *Encode(const SpriteLoader::SpriteCollection &sprite, AllocatorProc *allocator) override;
 	size_t BufferSize(uint width, uint height) override;
 	Blitter::PaletteAnimation UsePaletteAnimation() override;
-	void PaletteAnimate(const Palette &palette) override {};
+	void PaletteAnimate(const Palette &palette) override;
 	bool NeedsAnimationBuffer() override;
 
 	const char *GetName()  override { return "40bpp-anim-gpu"; }

@@ -30,7 +30,7 @@ static FBlitter_40bppAnimGPU iFBlitter_40bppAnimGPU;
 /** Cached black value. */
 static const Colour _black_colour(0, 0, 0);
 
-std::pair<uint, uint> GetXYFromDst(void *dst)
+std::pair<uint, uint> GetXYFromDst(const void *dst)
 {
 	uint difference = ((char *)dst - (char *)_screen.dst_ptr) / 4;
 	uint x = difference % _screen.pitch;
@@ -46,8 +46,13 @@ void *Blitter_40bppAnimGPU::MoveTo(void *video, int x, int y)
 
 void Blitter_40bppAnimGPU::SetPixel(void *video, int x, int y, uint8_t colour)
 {
-	// TODO
-	//__debugbreak();
+	assert(VideoDriver::GetInstance()->SupportsGPUBlitting());
+
+	std::pair<uint, uint> dstCoord = GetXYFromDst(video);
+	auto dstX = dstCoord.first + x;
+	auto dstY = dstCoord.second + y;
+
+	VideoDriver::GetInstance()->EnqueueFillRect(dstX, dstY, dstX, dstY, colour);
 }
 
 void Blitter_40bppAnimGPU::DrawRect(void *video, int width, int height, uint8_t colour)
@@ -61,9 +66,15 @@ void Blitter_40bppAnimGPU::DrawRect(void *video, int width, int height, uint8_t 
 	VideoDriver::GetInstance()->EnqueueFillRect(x, y, x + width - 1, y + height - 1, colour);
 }
 
-void Blitter_40bppAnimGPU::DrawLine(void *video, int x, int y, int x2, int y2, int screen_width, int screen_height, uint8_t colour, int width, int dash)
+void Blitter_40bppAnimGPU::DrawLine(void *video, int x, int y, int x2, int y2, [[maybe_unused]] int screen_width, [[maybe_unused]] int screen_height, uint8_t colour, int width, int dash)
 {
-	//__debugbreak();
+	assert(VideoDriver::GetInstance()->SupportsGPUBlitting());
+
+	std::pair<uint, uint> dstCoord = GetXYFromDst(video);
+	auto dstX = dstCoord.first;
+	auto dstY = dstCoord.second;
+
+	VideoDriver::GetInstance()->EnqueueDrawLine(dstX + x, dstY + y, dstX + x2, dstY + y2, colour, width, dash);
 }
 
 /**
@@ -103,7 +114,13 @@ void Blitter_40bppAnimGPU::Draw(Blitter::BlitterParams *bp, BlitterMode mode, Zo
 
 void Blitter_40bppAnimGPU::DrawColourMappingRect(void *dst, int width, int height, PaletteID pal)
 {
-	
+	assert(VideoDriver::GetInstance()->SupportsGPUBlitting());
+
+	std::pair<uint, uint> dstCoord = GetXYFromDst(dst);
+	auto x = dstCoord.first;
+	auto y = dstCoord.second;
+
+	VideoDriver::GetInstance()->EnqueueDrawColourMappingRect(x, y, width, height, pal);
 }
 
 Sprite *Blitter_40bppAnimGPU::Encode(const SpriteLoader::SpriteCollection &sprite, AllocatorProc *allocator)
@@ -112,22 +129,40 @@ Sprite *Blitter_40bppAnimGPU::Encode(const SpriteLoader::SpriteCollection &sprit
 }
 
 
-void Blitter_40bppAnimGPU::CopyFromBuffer(void *video, const void *src, int width, int height)
+void Blitter_40bppAnimGPU::CopyFromBuffer([[maybe_unused]] void *video, [[maybe_unused]] const void *src, int width, int height)
 {
-	//__debugbreak();
+	assert(VideoDriver::GetInstance()->SupportsGPUBlitting());
+
+	std::pair<uint, uint> dstCoord = GetXYFromDst(video);
+	auto x = dstCoord.first;
+	auto y = dstCoord.second;
+
+	VideoDriver::GetInstance()->EnqueueCopyFromBackup(x, y, width, height);
 }
 
-void Blitter_40bppAnimGPU::CopyToBuffer(const void *video, void *dst, int width, int height)
+void Blitter_40bppAnimGPU::CopyToBuffer([[maybe_unused]] const void *video, [[maybe_unused]] void *dst, int width, int height)
 {
-	
+	assert(VideoDriver::GetInstance()->SupportsGPUBlitting());
+
+	std::pair<uint, uint> dstCoord = GetXYFromDst(video);
+	auto x = dstCoord.first;
+	auto y = dstCoord.second;
+
+	VideoDriver::GetInstance()->EnqueueCopyToBackup(x, y, width, height);
 }
 
 void Blitter_40bppAnimGPU::CopyImageToBuffer(const void *video, void *dst, int width, int height, int dst_pitch)
 {
-	//__debugbreak();
+	assert(VideoDriver::GetInstance()->SupportsGPUBlitting());
+
+	std::pair<uint, uint> dstCoord = GetXYFromDst(video);
+	auto x = dstCoord.first;
+	auto y = dstCoord.second;
+
+	VideoDriver::GetInstance()->CopyImageToBuffer(dst, x, y, width, height, dst_pitch);
 }
 
-void Blitter_40bppAnimGPU::ScrollBuffer(void *video, int &left, int &top, int &width, int &height, int scroll_x, int scroll_y)
+void Blitter_40bppAnimGPU::ScrollBuffer([[maybe_unused]] void *video, int &left, int &top, int &width, int &height, int scroll_x, int scroll_y)
 {
 	VideoDriver::GetInstance()->ScrollBuffer(left, top, width, height, scroll_x, scroll_y);
 
@@ -160,15 +195,20 @@ void Blitter_40bppAnimGPU::ScrollBuffer(void *video, int &left, int &top, int &w
 	}
 }
 
-size_t Blitter_40bppAnimGPU::BufferSize(uint width, uint height)
+size_t Blitter_40bppAnimGPU::BufferSize([[maybe_unused]] uint width, [[maybe_unused]] uint height)
 {
-	//__debugbreak();
-	return 1;
+	// We've already allocated backup buffers for dst and anim, so tell the caller we need no memory
+	return 0;
 }
 
 Blitter::PaletteAnimation Blitter_40bppAnimGPU::UsePaletteAnimation()
 {
 	return Blitter::PALETTE_ANIMATION_VIDEO_BACKEND;
+}
+
+void Blitter_40bppAnimGPU::PaletteAnimate([[maybe_unused]] const Palette &palette)
+{
+	__debugbreak();
 }
 
 bool Blitter_40bppAnimGPU::NeedsAnimationBuffer()

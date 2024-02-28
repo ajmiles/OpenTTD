@@ -8,3 +8,5 @@ dxc /Tcs_6_0 /EScrollXCS /Zi /Qembed_debug /Fh ScrollXCS.csh /HV 2021 d3d12shade
 dxc /Tcs_6_0 /EScrollYCS /Zi /Qembed_debug /Fh ScrollYCS.csh /HV 2021 d3d12shaders.hlsl
 
 dxc /Tcs_6_0 /EBlitCS /Zi /Qembed_debug /Fh BlitCS.csh /HV 2021 d3d12shaders.hlsl
+
+dxc /Tcs_6_0 /EScreenshotCopyCS /Zi /Qembed_debug /Fh ScreenshotCopyCS.csh /HV 2021 d3d12shaders.hlsl

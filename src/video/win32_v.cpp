@@ -1634,9 +1634,34 @@ void VideoDriver_Win32D3D12::EnqueueFillRect(int left, int top, int right, int b
 	D3D12Backend::Get()->EnqueueFillRect(left, top, right, bottom, colour);
 }
 
+void VideoDriver_Win32D3D12::EnqueueDrawLine(int x, int y, int x2, int y2, uint8_t colour, int width, int dash)
+{
+	D3D12Backend::Get()->EnqueueDrawLine(x, y, x2, y2, colour, width, dash);
+}
+
 void VideoDriver_Win32D3D12::EnqueueSpriteBlit(SpriteBlitRequest *request)
 {
 	D3D12Backend::Get()->EnqueueSpriteBlit(request);
+}
+
+void VideoDriver_Win32D3D12::EnqueueCopyFromBackup(int x, int y, int width, int height)
+{
+	D3D12Backend::Get()->EnqueueCopyFromBackup(x, y, width, height);
+}
+
+void VideoDriver_Win32D3D12::EnqueueCopyToBackup(int x, int y, int width, int height)
+{
+	D3D12Backend::Get()->EnqueueCopyToBackup(x, y, width, height);
+}
+
+void VideoDriver_Win32D3D12::EnqueueDrawColourMappingRect(int x, int y, int width, int height, PaletteID pal)
+{
+	D3D12Backend::Get()->EnqueueDrawColourMappingRect(x, y, width, height, pal);
+}
+
+void VideoDriver_Win32D3D12::CopyImageToBuffer(void *dst, int x, int y, int width, int height, int dst_pitch)
+{
+	D3D12Backend::Get()->CopyImageToBuffer(dst, x, y, width, height, dst_pitch);
 }
 
 uint32_t VideoDriver_Win32D3D12::CreateGPUSprite(const SpriteLoader::SpriteCollection &sprite)

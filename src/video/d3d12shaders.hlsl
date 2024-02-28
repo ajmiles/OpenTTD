@@ -1,12 +1,8 @@
-#define RootSig "RootConstants(b0, num32bitconstants=12), DescriptorTable(UAV(u0, numdescriptors=3, flags = DESCRIPTORS_VOLATILE), SRV(t0, numdescriptors=3)), DescriptorTable(SRV(t0, space=1, numdescriptors=unbounded, flags = DESCRIPTORS_VOLATILE)), SRV(t3), RootConstants(b1, num32bitconstants=2)"
+#include "cpp_hlsl_shared.h"
 
-enum BlitType
-{
-	SOLID_COLOUR,
-	SPRITE_OPAQUE,
-	SPRITE_ALPHA
-};
+#define RootSig "RootConstants(b0, num32bitconstants=12), DescriptorTable(UAV(u0, numdescriptors=4, flags = DESCRIPTORS_VOLATILE), SRV(t0, numdescriptors=3)), DescriptorTable(SRV(t0, space=1, numdescriptors=unbounded, flags = DESCRIPTORS_VOLATILE)), SRV(t3), RootConstants(b1, num32bitconstants=2), UAV(u4)"
 
+// Copy-paste of the one in base.hpp for blitters
 /** The modes of blitting we can do. */
 enum BlitterMode {
 	BM_NORMAL,       ///< Perform the simple blitting.
@@ -16,6 +12,11 @@ enum BlitterMode {
 	BM_CRASH_REMAP,  ///< Perform a crash remapping.
 	BM_BLACK_REMAP,  ///< Perform remapping to a completely blackened sprite
 };
+
+static const uint PALETTE_TO_TRANSPARENT      = 802;
+static const uint PALETTE_NEWSPAPER           = 803;
+
+
 
 struct Colour
 {
@@ -66,19 +67,20 @@ Colour MakeColour(float4 colour)
 	return MakeColour(colour.r, colour.g, colour.b, colour.a);
 }
 
-RWTexture2D<uint> remap_tex : register(u1);
-RWTexture2D<uint> dst_tex : register(u2);
-RasterizerOrderedTexture2D<uint> remap_rov : register(u1);
-RasterizerOrderedTexture2D<uint> dst_rov : register(u2);
+RWTexture2D<uint> remap_tex : register(u0);
+RWTexture2D<uint> dst_tex : register(u1);
+RWTexture2D<uint> backup_remap_tex : register(u2);
+RWTexture2D<uint> backup_dst_tex : register(u3);
+
+RasterizerOrderedTexture2D<uint> remap_rov : register(u0);
+RasterizerOrderedTexture2D<uint> dst_rov : register(u1);
+RasterizerOrderedTexture2D<uint> backup_remap_rov : register(u2);
+RasterizerOrderedTexture2D<uint> backup_dst_rov : register(u3);
 
 Buffer<uint> palette[3] : register(t0);
 ByteAddressBuffer remap_buffer : register(t3);
 
 Texture2D<uint2> spriteTextures[] : register(t0,space1);
-
-static const uint SHADER_MODE_REMAP = 0;
-static const uint SHADER_MODE_PALETTE = 1;
-static const uint SHADER_MODE_PROGRAM = 2;
 
 cbuffer Params : register(b0)
 {
@@ -122,7 +124,7 @@ float4 mainPS(float4 vpos : SV_POSITION) : SV_TARGET
 	
 	float2 cursorPos = float2(cursorLocationX, cursorLocationY);
 	
-	if(length(cursorPos - vpos.xy) < 5)
+	if(length(cursorPos - vpos.xy) < 7)
 		return float4(1, 0, 0, 1);
 	
 	uint idx = remap_tex[coord];	
@@ -179,19 +181,59 @@ float2 GetScreenResolution()
 [RootSignature(RootSig)]
 float4 DrawVS(uint vid : SV_VertexID, uint instanceID : SV_InstanceID) : SV_POSITION
 {
-	uint x = (vid >= 1 && vid <= 3) ? 1 : 0;
-	uint y = (vid >= 2 && vid <= 4) ? 1 : 0;
-	
-	uint2 blitDims = GetBlitDimensions();
-	
-	uint2 unitSquare = uint2(x, y);
-	float2 scaledTranslationRectF = (unitSquare * blitDims + uint2(left, top));
-	
-	scaledTranslationRectF = scaledTranslationRectF / (GetScreenResolution() * 0.5f);
-	scaledTranslationRectF.y = -scaledTranslationRectF.y;
-	scaledTranslationRectF += float2(-1, 1);
+	if(blitType != LINE)
+	{
+		uint x = (vid >= 1 && vid <= 3) ? 1 : 0;
+		uint y = (vid >= 2 && vid <= 4) ? 1 : 0;
 		
-	return float4(scaledTranslationRectF, 0, 1);
+		uint2 blitDims = GetBlitDimensions();
+		
+		uint2 unitSquare = uint2(x, y);
+		float2 scaledTranslationRectF = (unitSquare * blitDims + uint2(left, top));
+		
+		scaledTranslationRectF = scaledTranslationRectF / (GetScreenResolution() * 0.5f);
+		scaledTranslationRectF.y = -scaledTranslationRectF.y;
+		scaledTranslationRectF += float2(-1, 1);
+			
+		return float4(scaledTranslationRectF, 0, 1);
+	}
+	else
+	{
+		int width = skip_left;
+		int dash = skip_top;
+		
+		int x = left;
+		int y = top;
+		int x2 = right;
+		int y2 = bottom;
+		
+		float2 v0 = float2(x, y);
+		float2 v1 = float2(x2, y2);
+		
+		float2 e0 = normalize(v1 - v0);
+		float2 perpE0 = float2(-e0.y, e0.x) * (width / 2.0f);
+				
+		float2 vPos = (vid <= 1 || vid == 5) ? v0: v1;
+		
+		// TODO Optimise
+		switch(vid)
+		{
+			case 0: 
+			case 4:
+			case 5: vPos += perpE0; break;
+			case 1: 
+			case 2:
+			case 3: vPos -= perpE0; break;
+		}
+		
+		float2 scaledTranslationRectF = vPos;
+		
+		scaledTranslationRectF = scaledTranslationRectF / (GetScreenResolution() * 0.5f);
+		scaledTranslationRectF.y = -scaledTranslationRectF.y;
+		scaledTranslationRectF += float2(-1, 1);
+			
+		return float4(scaledTranslationRectF, 0, 1);
+	}
 }
 
 struct PS_OUTPUT
@@ -342,12 +384,39 @@ BlitOutput CalculateOutputs(uint2 DTid, uint2 screenCoord, bool readROV)
 {
 	BlitOutput blitOutput = { 0, 0, false, false, false };
 	
-	if(blitType == SOLID_COLOUR)
+	if(blitType == RECTANGLE || blitType == LINE)
 	{
 		blitOutput.SetDst(MakeColour(0, 0, 0, 255).data);
 		blitOutput.SetAnim(colour);
 	}
-	else if(blitType >= SPRITE_OPAQUE)
+	else if(blitType == COLOUR_MAPPING_RECTANGLE)
+	{
+		uint pal = blitterMode;	// TODO
+
+		if(pal == PALETTE_TO_TRANSPARENT)
+		{
+			uint uDst = readROV ? dst_rov[screenCoord] : dst_tex[screenCoord];
+			uint anim = readROV ? remap_rov[screenCoord] : remap_tex[screenCoord];
+			
+			Colour b = MakeColour(uDst);
+			
+			if(anim != 0)
+				b = MakeColour(GetColourBrightness(b), 0, 0);
+			
+			blitOutput.SetDst(MakeTransparent(b, 154).data);
+		}
+		else if(pal == PALETTE_NEWSPAPER)
+		{
+			//blitOutput.SetDst(MakeColour(255, 0, 255, 255).data);
+			//blitOutput.SetAnim(0);
+		}
+		else
+		{
+			//blitOutput.SetDst(MakeColour(255, 0, 255, 255).data);
+			//blitOutput.SetAnim(0);
+		}
+	}
+	else if(blitType == SPRITE)
 	{
 		uint2 skipAmount = uint2(skip_left, skip_top);	
 		uint2 spriteLocalCoord = DTid + skipAmount;
@@ -356,13 +425,29 @@ BlitOutput CalculateOutputs(uint2 DTid, uint2 screenCoord, bool readROV)
 		
 		uint m = spriteTexelData.r;
 		uint a = spriteTexelData.g;
+		uint r = 0;
+		uint g = 0;
+		uint b = 0;
+		
+		if(m > 255)
+		{
+			// 32bpp?
+			a = m >> 24;
+			r = (m >> 16) & 0xFF;
+			g = (m >> 8) & 0xFF;
+			b = m & 0xFF;
+			m = 0;
+		}
+		
 		// TODO RGB
 		blitOutput.zeroAlpha = (a == 0);
 		
 		if(blitOutput.zeroAlpha)
 			return blitOutput;
 		
-		Colour src_px = MakeColour(0, 0, 0, a);
+		
+		
+		Colour src_px = MakeColour(r, g, b, a);
 												
 		switch(blitterMode)
 		{
@@ -517,14 +602,27 @@ void BlitCS(uint2 DTid : SV_DispatchThreadID)
 void ROVPS(float4 vpos : SV_POSITION)
 {
 	uint2 screenCoord = vpos.xy;
-	uint2 DTid = screenCoord - uint2(left, top);
 	
-	BlitOutput output = CalculateOutputs(DTid, screenCoord, true);
-	
-	if(output.writeDst)
-		dst_rov[screenCoord] = output.dst;
-	if(output.writeAnim)
-		remap_rov[screenCoord] = output.anim;
+	if(blitType == COPY_TO_BACKUP)
+	{
+		backup_dst_rov[screenCoord] = dst_rov[screenCoord];
+		backup_remap_rov[screenCoord] = remap_rov[screenCoord];
+	}
+	else if(blitType == COPY_FROM_BACKUP)		
+	{
+		dst_rov[screenCoord] = backup_dst_rov[screenCoord];
+		remap_rov[screenCoord] = backup_remap_rov[screenCoord]; 
+	}
+	else
+	{
+		uint2 DTid = screenCoord - uint2(left, top);
+		BlitOutput output = CalculateOutputs(DTid, screenCoord, true);
+		
+		if(output.writeDst)
+			dst_rov[screenCoord] = output.dst;
+		if(output.writeAnim)
+			remap_rov[screenCoord] = output.anim;
+	}
 }
 
 cbuffer ScrollParams : register(b0)
@@ -612,5 +710,30 @@ void ScrollYCS(uint3 groupID : SV_GroupID, uint groupIndex : SV_GroupIndex)
 			writeCoord.y += THREAD_GROUP_SIZE;
 		else
 			writeCoord.y -= THREAD_GROUP_SIZE;
+	}
+}
+
+cbuffer ScreenshotParams : register(b0)
+{
+	int x;
+	int y;
+	int width;
+	int dst_pitch;
+}
+
+RWByteAddressBuffer screenshotBuffer : register(u4);
+
+[RootSignature(RootSig)]
+[numthreads(64, 1, 1)]
+void ScreenshotCopyCS(uint3 DTid : SV_DispatchThreadID)
+{
+	if(DTid.x < width)
+	{	
+		uint2 screenCoord = uint2(x, y) + DTid.xy;
+		
+		Colour b = RealizeBlendedColour(screenCoord, false);
+		
+		uint writeAddress = (DTid.y * dst_pitch + DTid.x) * 4;
+		screenshotBuffer.Store<Colour>(writeAddress, b);
 	}
 }

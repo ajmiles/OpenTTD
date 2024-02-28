@@ -217,7 +217,13 @@ public:
 	}
 
 	void EnqueueFillRect(int left, int top, int right, int bottom, uint8_t colour) override;
+	void EnqueueDrawColourMappingRect(int x, int y, int width, int height, PaletteID pal) override;
+	void EnqueueDrawLine(int x, int y, int x2, int y2, uint8_t colour, int width, int dash) override;
 	void EnqueueSpriteBlit(SpriteBlitRequest *request) override;
+	void EnqueueCopyFromBackup(int x, int y, int width, int height) override;
+	void EnqueueCopyToBackup(int x, int y, int width, int height) override;
+	void CopyImageToBuffer(void* dst, int x, int y, int width, int height, int dst_pitch) override;
+
 	uint32_t CreateGPUSprite(const SpriteLoader::SpriteCollection &sprite) override;
 	void ScrollBuffer(int &left, int &top, int &width, int &height, int scroll_x, int scroll_y) override;
 

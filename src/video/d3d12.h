@@ -31,6 +31,8 @@
 #define USE_PIX
 #include "pix/pix3.h"
 
+#include "cpp_hlsl_shared.h"
+
 #define MAX_SPRITES_SUPPORTED 100000
 
 using Microsoft::WRL::ComPtr;
@@ -38,9 +40,11 @@ using Microsoft::WRL::ComPtr;
 class D3D12Sprite;
 
 enum Descriptors {
-	VID_TEXTURE_FLOAT,
 	ANIM_TEXTURE,
-	VID_TEXTURE_UINT,
+	VID_TEXTURE,
+	BACKUP_ANIM_TEXTURE,
+	BACKUP_VID_TEXTURE,
+
 	PALETTE_TEXTURE_0,
 	PALETTE_TEXTURE_1,
 	PALETTE_TEXTURE_2,
@@ -49,12 +53,7 @@ enum Descriptors {
 	DESCRIPTOR_COUNT = SPRITE_START + (MAX_SPRITES_SUPPORTED * ZOOM_LVL_END)
 };
 
-enum BlitType {
-	SOLID_COLOUR,
-	SPRITE_OPAQUE,
-	SPRITE_ALPHA,
-	BLIT_TYPE_COUNT
-};
+
 
 
 struct BlitRequest {
@@ -99,7 +98,7 @@ private:
 	ComPtr<ID3D12Device4> device;
 	ComPtr<ID3D12CommandQueue> commandQueue;
 	ComPtr<IDXGISwapChain3> swapChain;
-	ComPtr<ID3D12Fence> fences[SWAP_CHAIN_BACK_BUFFER_COUNT];
+	ComPtr<ID3D12Fence> fence;
 
 	ComPtr<ID3D12RootSignature> rootSignature;
 	ComPtr<ID3D12PipelineState> finalCombinePSO;
@@ -107,6 +106,7 @@ private:
 	ComPtr<ID3D12PipelineState> scrollXPSO, scrollYPSO;
 
 	ComPtr<ID3D12PipelineState> blitCSPSO;
+	ComPtr<ID3D12PipelineState> screenshotCSPSO;
 
 	ComPtr<ID3D12DescriptorHeap> rtvHeap;
 	uint32_t rtvDescriptorSize;
@@ -114,24 +114,28 @@ private:
 	ComPtr<ID3D12DescriptorHeap> srvHeap;
 	uint32_t srvDescriptorSize;
 
-	uint64_t nextFenceValue = 0;
-	HANDLE fenceEvent;
+	
 
-	static const uint SIZE_OF_REMAP_BUFFER_UPLOAD_SPACE = 64 * 1024 * 1024;
+	static const uint SIZE_OF_REMAP_BUFFER_UPLOAD_SPACE = 1 * 1024 * 1024;	// TODO: Use a growable reserved resource
 
-	ComPtr<ID3D12Resource> vid_texture_upload[SWAP_CHAIN_BACK_BUFFER_COUNT];
 	ComPtr<ID3D12Resource> palette_texture_upload[SWAP_CHAIN_BACK_BUFFER_COUNT];
-	ComPtr<ID3D12Resource> anim_texture_upload[SWAP_CHAIN_BACK_BUFFER_COUNT];
-
 	ComPtr<ID3D12Resource> remap_buffer_upload[SWAP_CHAIN_BACK_BUFFER_COUNT];
 	void *remap_buffer_mapped[SWAP_CHAIN_BACK_BUFFER_COUNT];
 
-	ComPtr<ID3D12Resource> vid_texture_default;
-	ComPtr<ID3D12Resource> anim_texture_default;
 	ComPtr<ID3D12Resource> vid_texture_default_GPUBlitter;
 	ComPtr<ID3D12Resource> anim_texture_default_GPUBlitter;
+	ComPtr<ID3D12Resource> backup_vid_texture_default_GPUBlitter;
+	ComPtr<ID3D12Resource> backup_anim_texture_default_GPUBlitter;
 
 	ComPtr<ID3D12Resource> swapChainBuffers[SWAP_CHAIN_BACK_BUFFER_COUNT];
+
+	ComPtr<ID3D12QueryHeap> timestampQueryHeap;
+	ComPtr<ID3D12Resource> queryReadbackBuffer;
+	UINT64 gpuTimestampFrequency;
+
+	static const uint FRAME_TIME_HISTORY_LENGTH = 512;
+	float gpuFrameTimes[FRAME_TIME_HISTORY_LENGTH];
+	uint nextGpuFrameTimeSlot = 0;
 
 	void *vidSurface = nullptr;
 	void *animSurface = nullptr;
@@ -142,8 +146,12 @@ private:
 	uint surfacePitchInPixels;
 	uint remapBufferSpaceUsedThisFrame = 0;
 
-	HANDLE frameEvents[SWAP_CHAIN_BACK_BUFFER_COUNT];
+	std::map<UINT64, uint> remapBufferCache;
+
+	uint64_t nextFenceValue = 0;
+	HANDLE fenceEvent;
 	uint64_t frameEndValues[SWAP_CHAIN_BACK_BUFFER_COUNT] = {};
+
 	ComPtr<ID3D12CommandAllocator> commandAllocators[SWAP_CHAIN_BACK_BUFFER_COUNT];
 	ComPtr<ID3D12GraphicsCommandList> commandList;
 
@@ -181,6 +189,16 @@ private:
 		return start;
 	}
 
+	void ResetRecording(bool beginTimestamp = true);
+	void EndRecording(bool endTimestamp = true);
+	uint CurrentFrameIndex() const
+	{
+		if (swapChain.Get() == nullptr)
+			return 0;
+
+		return swapChain->GetCurrentBackBufferIndex();
+	}
+
 public:
 	/** Get singleton instance of this class. */
 	static inline D3D12Backend *Get()
@@ -214,7 +232,12 @@ public:
 	void ReleaseAnimBuffer(const Rect &update_rect);
 
 	void EnqueueFillRect(int left, int top, int right, int bottom, uint8_t colour);
+	void EnqueueDrawColourMappingRect(int x, int y, int width, int height, PaletteID pal);
+	void EnqueueDrawLine(int x, int y, int x2, int y2, uint8_t colour, int width, int dash);
 	void EnqueueSpriteBlit(SpriteBlitRequest *request);
+	void EnqueueCopyFromBackup(int x, int y, int width, int height);
+	void EnqueueCopyToBackup(int x, int y, int width, int height);
+	void CopyImageToBuffer(void *dst, int x, int y, int width, int height, int dst_pitch);
 
 	uint32_t CreateGPUSprite(const SpriteLoader::SpriteCollection &sprite);
 	void ScrollBuffer(int &left, int &top, int &width, int &height, int scroll_x, int scroll_y);

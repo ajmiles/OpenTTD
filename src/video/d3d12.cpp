@@ -43,6 +43,7 @@
 #include "ScrollXCS.csh"
 #include "ScrollYCS.csh"
 #include "BlitCS.csh"
+#include "ScreenshotCopyCS.csh"
 
 /** A simple 2D vertex with just position and texture. */
 struct Simple2DVertex {
@@ -100,15 +101,16 @@ D3D12Backend::~D3D12Backend()
  */
 const char *D3D12Backend::Init()
 {
-
+#if _DEBUG
 	ComPtr<ID3D12Debug> debugController;
 	if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(debugController.GetAddressOf())))) {
-		//debugController->EnableDebugLayer();
+		debugController->EnableDebugLayer();
 
 		ComPtr<ID3D12Debug1> spDebugController1;
 		debugController->QueryInterface(IID_PPV_ARGS(&spDebugController1));
-		//spDebugController1->SetEnableGPUBasedValidation(true);
+		spDebugController1->SetEnableGPUBasedValidation(true);
 	}
+#endif
 
 	static bool useWarpDevice = false;
 
@@ -141,26 +143,21 @@ const char *D3D12Backend::Init()
 	if (FAILED(hr))
 		return "Failed to create D3D12 Graphics Command Queue";
 
+	hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(fence.ReleaseAndGetAddressOf()));
+	fence->SetName(L"OpenTTD D3D12 Fence");
+
+	fenceEvent = CreateEventA(nullptr, FALSE, FALSE, nullptr);
+
 	for (int i = 0; i < SWAP_CHAIN_BACK_BUFFER_COUNT; i++) {
-		hr = device->CreateFence(nextFenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(fences[i].ReleaseAndGetAddressOf()));
-		fences[i]->SetName(L"OpenTTD D3D12 Fence");
-	}
-
-	fenceEvent = CreateEventA(nullptr, FALSE, FALSE, "Fence Event");
-
-	for (int i = 0; i < SWAP_CHAIN_BACK_BUFFER_COUNT; i++) 		{
 		hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(commandAllocators[i].ReleaseAndGetAddressOf()));
 
 		wchar_t str[256];
 		swprintf_s(str, L"OpenTTD D3D12 CommandAllocator Frame Index %u", i);
 		commandAllocators[i]->SetName(str);
-
-		frameEvents[i] = CreateEventA(nullptr, FALSE, FALSE, "Fence Event");
 	}
 
 	hr = device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(commandList.ReleaseAndGetAddressOf()));
 	commandList->SetName(L"OpenTTD D3D12 Command List");
-	commandList->Reset(commandAllocators[0].Get(), nullptr);
 
 	hr = device->CreateRootSignature(0, g_mainVS, sizeof(g_mainVS), IID_PPV_ARGS(rootSignature.ReleaseAndGetAddressOf()));
 
@@ -173,6 +170,7 @@ const char *D3D12Backend::Init()
 	psoDesc.pRootSignature = rootSignature.Get();
 	psoDesc.PS = { g_mainPS, sizeof(g_mainPS) };
 	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
 	psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
 	psoDesc.SampleDesc.Count = 1;
 	psoDesc.SampleMask = 1;
@@ -199,6 +197,9 @@ const char *D3D12Backend::Init()
 	csPSODesc.CS = { g_BlitCS, sizeof(g_BlitCS) };
 	hr = device->CreateComputePipelineState(&csPSODesc, IID_PPV_ARGS(blitCSPSO.ReleaseAndGetAddressOf()));
 
+	csPSODesc.CS = { g_ScreenshotCopyCS, sizeof(g_ScreenshotCopyCS) };
+	hr = device->CreateComputePipelineState(&csPSODesc, IID_PPV_ARGS(screenshotCSPSO.ReleaseAndGetAddressOf()));
+
 	D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
 	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 	rtvHeapDesc.NumDescriptors = SWAP_CHAIN_BACK_BUFFER_COUNT + 2;
@@ -212,21 +213,55 @@ const char *D3D12Backend::Init()
 
 	paletteSurface = MallocT<uint>(256);
 
+	// Timestamp queries
+	{
+		uint numTimestamps = SWAP_CHAIN_BACK_BUFFER_COUNT * 2;	// Start and end.
+		D3D12_QUERY_HEAP_DESC queryHeapDesc = { D3D12_QUERY_HEAP_TYPE_TIMESTAMP, numTimestamps };
+		hr = device->CreateQueryHeap(&queryHeapDesc, IID_PPV_ARGS(timestampQueryHeap.ReleaseAndGetAddressOf()));
+
+		D3D12_RESOURCE_DESC queryReadbackDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(UINT64) * numTimestamps);
+		D3D12_HEAP_PROPERTIES readbackProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
+
+		hr = device->CreateCommittedResource(&readbackProps, D3D12_HEAP_FLAG_NONE, &queryReadbackDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(queryReadbackBuffer.ReleaseAndGetAddressOf()));
+
+		commandQueue->GetTimestampFrequency(&gpuTimestampFrequency);
+	}
+
+	ResetRecording();
+
 	return nullptr;
+}
+
+void D3D12Backend::ResetRecording(bool beginTimestamp)
+{
+	uint frameIndex = CurrentFrameIndex();
+
+	commandAllocators[frameIndex]->Reset();
+	commandList->Reset(commandAllocators[frameIndex].Get(), nullptr);
+
+	if (beginTimestamp) {
+		commandList->EndQuery(timestampQueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, frameIndex * 2);
+	}
+}
+
+void D3D12Backend::EndRecording(bool endTimestamp)
+{
+	uint frameIndex = CurrentFrameIndex();
+
+	if (endTimestamp) {
+		commandList->EndQuery(timestampQueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, frameIndex * 2 + 1);
+		commandList->ResolveQueryData(timestampQueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, frameIndex * 2, 2, queryReadbackBuffer.Get(), frameIndex * 2 * sizeof(UINT64));
+	}
+
+	commandList->Close();
 }
 
 void D3D12Backend::WaitForGPU()
 {
-	ComPtr<ID3D12Fence> fence = fences[0];	// Doesn't matter which fence we use
-	UINT64 now = fence->GetCompletedValue();
-	UINT64 toBe = ++nextFenceValue;
-	commandQueue->Signal(fence.Get(), toBe);
+	commandQueue->Signal(fence.Get(), ++nextFenceValue);
 
-	// TODO. Use an event.
-	while (fence->GetCompletedValue() < nextFenceValue)
-	{
-		Sleep(0);
-	}
+	fence->SetEventOnCompletion(nextFenceValue, fenceEvent);
+	WaitForSingleObject(fenceEvent, INFINITE);
 }
 
 HRESULT D3D12Backend::CreateOrResizeSwapchain(int w, int h, bool force, HWND hwnd)
@@ -272,6 +307,7 @@ HRESULT D3D12Backend::CreateOrResizeSwapchain(int w, int h, bool force, HWND hwn
 		sc1->QueryInterface(IID_PPV_ARGS(swapChain.ReleaseAndGetAddressOf()));
 
 		isCreatingSwapChain = false;
+		swapChain->SetMaximumFrameLatency(1);
 
 		if (FAILED(hr)) {
 			// TODO Error?
@@ -316,17 +352,17 @@ HRESULT D3D12Backend::CreateOrResizeSwapchain(int w, int h, bool force, HWND hwn
 
 void D3D12Backend::Present()
 {
-	uint currentFrameIndex = swapChain->GetCurrentBackBufferIndex();
+	uint frameIndex = CurrentFrameIndex();
 
 	char str[256];
-	sprintf_s(str, "Present (%u)\n", currentFrameIndex);
+	sprintf_s(str, "Present (%u)\n", frameIndex);
 	PIXBeginEvent(PIX_COLOR_DEFAULT, str);
 
 
 	if (swapChainResourceState != D3D12_RESOURCE_STATE_PRESENT) {
 		D3D12_RESOURCE_BARRIER transitionBarrier = {};
 		transitionBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		transitionBarrier.Transition.pResource = swapChainBuffers[currentFrameIndex].Get();
+		transitionBarrier.Transition.pResource = swapChainBuffers[frameIndex].Get();
 		transitionBarrier.Transition.Subresource = 0;
 		transitionBarrier.Transition.StateBefore = swapChainResourceState;
 		transitionBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
@@ -335,21 +371,23 @@ void D3D12Backend::Present()
 		swapChainResourceState = D3D12_RESOURCE_STATE_PRESENT;
 	}
 
-	commandList->Close();
+	EndRecording();
+
 	commandQueue->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList *const *>(commandList.GetAddressOf()));
 
-	frameEndValues[currentFrameIndex] = ++nextFenceValue;
+	frameEndValues[frameIndex] = ++nextFenceValue;
 
 	PIXBeginEvent(PIX_COLOR_DEFAULT, "swapChain->Present()");
 	HRESULT hr = swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
+	assert(SUCCEEDED(hr));
 	PIXEndEvent();
 
-	UINT64 valueToSignalTo = frameEndValues[currentFrameIndex];
-	sprintf_s(str, "Signal + SetEventOnCompletion (%u) to value %u", currentFrameIndex, valueToSignalTo);
+	UINT64 valueToSignalTo = frameEndValues[frameIndex];
+	sprintf_s(str, "Signal + SetEventOnCompletion (%u) to value %llu", frameIndex, valueToSignalTo);
 
 	PIXBeginEvent(PIX_COLOR_DEFAULT, str);
-	commandQueue->Signal(fences[currentFrameIndex].Get(), valueToSignalTo);
-	fences[currentFrameIndex]->SetEventOnCompletion(valueToSignalTo, frameEvents[currentFrameIndex]);
+	commandQueue->Signal(fence.Get(), valueToSignalTo);
+	
 	PIXEndEvent();
 
 	frameNumber++;
@@ -360,23 +398,35 @@ void D3D12Backend::Present()
 		//PIXGpuCaptureNextFrames(name, 1);
 	}
 
-	currentFrameIndex = swapChain->GetCurrentBackBufferIndex();
+	frameIndex = CurrentFrameIndex();
 
 	remapBufferSpaceUsedThisFrame = 0;
+	remapBufferCache.clear();
 
-	sprintf_s(str, "WaitForPreviousFrame (%u). Waiting on value %u. Currently %u.\n", currentFrameIndex, frameEndValues[currentFrameIndex], fences[currentFrameIndex]->GetCompletedValue());
-	PIXBeginEvent(PIX_COLOR_DEFAULT, str);	
-	//WaitForSingleObject(frameEvents[currentFrameIndex], INFINITE);
+	sprintf_s(str, "WaitForPreviousFrame (%u). Waiting on value %llu. Currently %llu.\n", frameIndex, frameEndValues[frameIndex], fence->GetCompletedValue());
+	PIXBeginEvent(PIX_COLOR_DEFAULT, str);
 
-	while (fences[currentFrameIndex]->GetCompletedValue() < frameEndValues[currentFrameIndex]) {
-		//__debugbreak();
-		YieldProcessor();
-	}
+	fence->SetEventOnCompletion(frameEndValues[frameIndex], fenceEvent);
+	WaitForSingleObject(fenceEvent, INFINITE);
 
 	PIXEndEvent();
 
-	commandAllocators[currentFrameIndex]->Reset();
-	commandList->Reset(commandAllocators[currentFrameIndex].Get(), nullptr);
+	// Pick up the latest pair of timestamps
+	{
+		UINT64 *timestamps;
+		queryReadbackBuffer->Map(0, nullptr, (void **)&timestamps);
+
+		uint firstTimestamp = frameIndex * 2;
+		UINT64 startTime = timestamps[firstTimestamp];
+		UINT64 endTime = timestamps[firstTimestamp + 1];
+
+		float frameTimeMs = ((endTime - startTime) / (double)gpuTimestampFrequency) * 1000.0;
+
+		gpuFrameTimes[nextGpuFrameTimeSlot] = frameTimeMs;
+		nextGpuFrameTimeSlot = (nextGpuFrameTimeSlot + 1) % FRAME_TIME_HISTORY_LENGTH;
+	}
+
+	ResetRecording();
 
 	static int frames = 0;
 
@@ -465,10 +515,9 @@ bool D3D12Backend::Resize(int w, int h, bool force)
 
 	// Default Textures
 	{
-		vid_texture_default.Reset();
-		anim_texture_default.Reset();
 		vid_texture_default_GPUBlitter.Reset();
 		anim_texture_default_GPUBlitter.Reset();
+		backup_vid_texture_default_GPUBlitter.Reset();
 
 		D3D12_RESOURCE_DESC resDesc = {};
 		resDesc.DepthOrArraySize = resDesc.MipLevels = resDesc.SampleDesc.Count = 1;
@@ -480,67 +529,46 @@ bool D3D12Backend::Resize(int w, int h, bool force)
 
 		resDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
 		HRESULT hr = device->CreateCommittedResource(&defaultProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-													nullptr, IID_PPV_ARGS(vid_texture_default.ReleaseAndGetAddressOf()));
-		hr = device->CreateCommittedResource(&defaultProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
 													nullptr, IID_PPV_ARGS(vid_texture_default_GPUBlitter.ReleaseAndGetAddressOf()));
+		hr = device->CreateCommittedResource(&defaultProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+													nullptr, IID_PPV_ARGS(backup_vid_texture_default_GPUBlitter.ReleaseAndGetAddressOf()));
 
-		device->CreateUnorderedAccessView(vid_texture_default_GPUBlitter.Get(), nullptr, nullptr, GetDescriptor(Descriptors::VID_TEXTURE_FLOAT));
 		device->CreateRenderTargetView(vid_texture_default_GPUBlitter.Get(), nullptr, rtvHandle);
 
 		D3D12_UNORDERED_ACCESS_VIEW_DESC uavDescUINT = {};
 		uavDescUINT.Format = DXGI_FORMAT_R32_UINT;
 		uavDescUINT.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-		device->CreateUnorderedAccessView(vid_texture_default_GPUBlitter.Get(), nullptr, &uavDescUINT, GetDescriptor(Descriptors::VID_TEXTURE_UINT));
+		device->CreateUnorderedAccessView(vid_texture_default_GPUBlitter.Get(), nullptr, &uavDescUINT, GetDescriptor(Descriptors::VID_TEXTURE));
+		device->CreateUnorderedAccessView(backup_vid_texture_default_GPUBlitter.Get(), nullptr, &uavDescUINT, GetDescriptor(Descriptors::BACKUP_VID_TEXTURE));
 
 		rtvHandle.ptr += rtvDescriptorSize;
 
-		vid_texture_default->SetName(L"OpenTTD D3D12 Video Texture");
-
 		resDesc.Format = DXGI_FORMAT_R8_UINT;
 		hr = device->CreateCommittedResource(&defaultProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-												nullptr, IID_PPV_ARGS(anim_texture_default.ReleaseAndGetAddressOf()));
-		hr = device->CreateCommittedResource(&defaultProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
 												nullptr, IID_PPV_ARGS(anim_texture_default_GPUBlitter.ReleaseAndGetAddressOf()));
+		hr = device->CreateCommittedResource(&defaultProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+												nullptr, IID_PPV_ARGS(backup_anim_texture_default_GPUBlitter.ReleaseAndGetAddressOf()));
 
 		device->CreateUnorderedAccessView(anim_texture_default_GPUBlitter.Get(), nullptr, nullptr, GetDescriptor(Descriptors::ANIM_TEXTURE));
+		device->CreateUnorderedAccessView(backup_anim_texture_default_GPUBlitter.Get(), nullptr, nullptr, GetDescriptor(Descriptors::BACKUP_ANIM_TEXTURE));
 		device->CreateRenderTargetView(anim_texture_default_GPUBlitter.Get(), nullptr, rtvHandle);
-
-		anim_texture_default->SetName(L"OpenTTD D3D12 Anim Texture");
 	}
 
 	for (int i = 0; i < SWAP_CHAIN_BACK_BUFFER_COUNT; i++) {
 		
 		// Upload Buffers
 		{
-			vid_texture_upload[i].Reset();
-			anim_texture_upload[i].Reset();
-
 			D3D12_RESOURCE_DESC resDesc = {};
 			resDesc.DepthOrArraySize = resDesc.MipLevels = resDesc.SampleDesc.Count = 1;
 			resDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
 			resDesc.Format = DXGI_FORMAT_UNKNOWN;
 			resDesc.Height = 1;
 			resDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-			resDesc.Width = vidBufferSize;
-
-			HRESULT hr = device->CreateCommittedResource(&uploadProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_COPY_SOURCE,
-														nullptr, IID_PPV_ARGS(vid_texture_upload[i].ReleaseAndGetAddressOf()));
-
-			wchar_t str[256];
-			swprintf_s(str, L"OpenTTD D3D12 Video Upload Buffer Frame Index %u", i);
-			vid_texture_upload[i]->SetName(str);
-
-			resDesc.Width = animBufferSize;
-			hr = device->CreateCommittedResource(&uploadProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_COPY_SOURCE,
-													nullptr, IID_PPV_ARGS(anim_texture_upload[i].ReleaseAndGetAddressOf()));
-
-			swprintf_s(str, L"OpenTTD D3D12 Anim Upload Buffer Frame Index %u", i);
-			anim_texture_upload[i]->SetName(str);
-
 			resDesc.Width = 256 * 4;
-			hr = device->CreateCommittedResource(&uploadProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE,
-													nullptr, IID_PPV_ARGS(palette_texture_upload[i].ReleaseAndGetAddressOf()));
 
+			HRESULT hr = device->CreateCommittedResource(&uploadProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE,
+													nullptr, IID_PPV_ARGS(palette_texture_upload[i].ReleaseAndGetAddressOf()));
+			
 			D3D12_SHADER_RESOURCE_VIEW_DESC paletteSRVDesc = {};
 			paletteSRVDesc.Format = DXGI_FORMAT_R32_UINT;
 			paletteSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
@@ -573,24 +601,21 @@ void D3D12Backend::FlushSpriteBuffer()
 	QueryPerformanceFrequency(&freq);
 	QueryPerformanceCounter(&start);
 
-	uint currentFrameIndex = swapChain->GetCurrentBackBufferIndex();
+	uint frameIndex = CurrentFrameIndex();
 
 	char str[256];
-	sprintf_s(str, "FlushSpriteBuffer (%u) %u sprites", currentFrameIndex, blitRequests.size());
+	sprintf_s(str, "FlushSpriteBuffer (%u) %llu sprites", frameIndex, blitRequests.size());
 
 	PIXBeginEvent(commandList.Get(), PIX_COLOR_DEFAULT, str);
 
 	UpdatePaletteResource();
 
-
 	static bool useCompute = false;
-
-
 	static const D3D12_RESOURCE_BARRIER uavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
 
-	D3D12_GPU_VIRTUAL_ADDRESS baseRemapAddress = remap_buffer_upload[currentFrameIndex]->GetGPUVirtualAddress();
+	D3D12_GPU_VIRTUAL_ADDRESS baseRemapAddress = remap_buffer_upload[frameIndex]->GetGPUVirtualAddress();
 	uint screenResolution = (_screen.width | (_screen.height << 16));
-	uint passConstants[2] = { screenResolution, currentFrameIndex };
+	uint passConstants[2] = { screenResolution, frameIndex };
 
 	commandList->SetDescriptorHeaps(1, srvHeap.GetAddressOf());
 
@@ -627,21 +652,14 @@ void D3D12Backend::FlushSpriteBuffer()
 		commandList->SetGraphicsRootSignature(rootSignature.Get());		
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-		D3D12_VIEWPORT viewport = { 0, 0, _screen.width, _screen.height, 0, 1 };
+		D3D12_VIEWPORT viewport = { 0, 0, (float)_screen.width, (float)_screen.height, 0, 1 };
 		commandList->RSSetViewports(1, &viewport);
 
-		D3D12_RECT scissor = { 0, 0, _screen.width, _screen.height };
+		D3D12_RECT scissor = { 0, 0, (LONG)_screen.width, (LONG)_screen.height };
 		commandList->RSSetScissorRects(1, &scissor);
 
-		/*
-		D3D12_RESOURCE_BARRIER targetsSRVToRTV[2];
-		targetsSRVToRTV[0] = CD3DX12_RESOURCE_BARRIER::Transition(vid_texture_default_GPUBlitter.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_RENDER_TARGET);
-		targetsSRVToRTV[1] = CD3DX12_RESOURCE_BARRIER::Transition(anim_texture_default_GPUBlitter.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_RENDER_TARGET);
-		commandList->ResourceBarrier(ARRAYSIZE(targetsSRVToRTV), targetsSRVToRTV);
-		*/
 		// Draw the blit requests.
 		commandList->SetPipelineState(blitPSO.Get());
-
 		commandList->OMSetRenderTargets(0, nullptr, TRUE, nullptr);
 
 		D3D12_GPU_DESCRIPTOR_HANDLE firstSpriteHandle = srvHeap->GetGPUDescriptorHandleForHeapStart();
@@ -660,15 +678,9 @@ void D3D12Backend::FlushSpriteBuffer()
 			commandList->SetGraphicsRoot32BitConstants(0, numDwordsToSetForRequest, &req, 0);
 			commandList->DrawInstanced(6, 1, 0, 0);
 		}
-
-		/*
-		D3D12_RESOURCE_BARRIER targetsRTVToSRV[2];
-		targetsRTVToSRV[0] = CD3DX12_RESOURCE_BARRIER::Transition(vid_texture_default_GPUBlitter.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-		targetsRTVToSRV[1] = CD3DX12_RESOURCE_BARRIER::Transition(anim_texture_default_GPUBlitter.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-		commandList->ResourceBarrier(ARRAYSIZE(targetsRTVToSRV), targetsRTVToSRV);*/
 	}
 
-	uint numRequests = blitRequests.size();
+	size_t numRequests = blitRequests.size();
 
 	blitRequests.clear();
 
@@ -679,7 +691,11 @@ void D3D12Backend::FlushSpriteBuffer()
 	double seconds = (end.QuadPart - start.QuadPart) / (double)freq.QuadPart;
 	double milliseconds = seconds * 1000.0;
 
-	
+	if (milliseconds > 10.0f) {
+		char str[256];
+		sprintf_s(str, "Took %f milliseconds to do %llu sprites\n", milliseconds, numRequests);
+		OutputDebugStringA(str);
+	}
 
 	static UINT64 totalRequests = 0;
 	static double totalTime = 0;
@@ -687,8 +703,8 @@ void D3D12Backend::FlushSpriteBuffer()
 	totalRequests += numRequests;
 	totalTime += seconds;
 
-	sprintf_s(str, "FlushSpriteBuffer, %f per millisecond\n", totalRequests / (totalTime * 1000.0));
-	OutputDebugStringA(str);
+	//sprintf_s(str, "FlushSpriteBuffer, %f per millisecond\n", totalRequests / (totalTime * 1000.0));
+	//OutputDebugStringA(str);
 	
 }
 
@@ -699,7 +715,7 @@ void D3D12Backend::Paint()
 {
 	PIXBeginEvent(commandList.Get(), PIX_COLOR_DEFAULT, L"Paint");
 
-	uint currentFrameIndex = swapChain->GetCurrentBackBufferIndex();
+	uint frameIndex = CurrentFrameIndex();
 
 	FlushSpriteBuffer();
 	UpdatePaletteResource();
@@ -709,17 +725,17 @@ void D3D12Backend::Paint()
 	commandList->SetGraphicsRootDescriptorTable(1, srvHeap->GetGPUDescriptorHandleForHeapStart());
 	commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-	D3D12_VIEWPORT viewport = { 0, 0, _screen.width, _screen.height, 0, 1 };
+	D3D12_VIEWPORT viewport = { 0, 0, (float)_screen.width, (float)_screen.height, 0, 1 };
 	commandList->RSSetViewports(1, &viewport);
 
-	D3D12_RECT scissor = { 0, 0, _screen.width, _screen.height };
+	D3D12_RECT scissor = { 0, 0, (LONG)_screen.width, (LONG)_screen.height };
 	commandList->RSSetScissorRects(1, &scissor);
 
 	if (swapChainResourceState != D3D12_RESOURCE_STATE_RENDER_TARGET) {
 		// PRESENT to RENDER TARGET
 		D3D12_RESOURCE_BARRIER presentToRTV = {};
 		presentToRTV.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		presentToRTV.Transition.pResource = swapChainBuffers[currentFrameIndex].Get();
+		presentToRTV.Transition.pResource = swapChainBuffers[frameIndex].Get();
 		presentToRTV.Transition.StateBefore = swapChainResourceState;
 		presentToRTV.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
 
@@ -728,19 +744,19 @@ void D3D12Backend::Paint()
 	}
 
 	D3D12_CPU_DESCRIPTOR_HANDLE rtvStart = rtvHeap->GetCPUDescriptorHandleForHeapStart();
-	rtvStart.ptr += (currentFrameIndex * rtvDescriptorSize);
+	rtvStart.ptr += (frameIndex * rtvDescriptorSize);
 
 	commandList->OMSetRenderTargets(1, &rtvStart, TRUE, nullptr);
 	commandList->SetPipelineState(finalCombinePSO.Get());
 
-	uint shaderMode = 0;	// Remap
+	uint shaderMode = SHADER_MODE_REMAP;	// Remap
 
 	if (!BlitterFactory::GetCurrentBlitter()->NeedsAnimationBuffer()) {
-		shaderMode = (BlitterFactory::GetCurrentBlitter()->GetScreenDepth() == 8) ? 1 : 2;
+		shaderMode = (BlitterFactory::GetCurrentBlitter()->GetScreenDepth() == 8) ? SHADER_MODE_PALETTE : SHADER_MODE_PROGRAM;
 	}
 
 	commandList->SetGraphicsRoot32BitConstant(0, shaderMode, 0);
-	commandList->SetGraphicsRoot32BitConstant(0, currentFrameIndex, 1);
+	commandList->SetGraphicsRoot32BitConstant(0, frameIndex, 1);
 
 	Point cursor_pos = _cursor.pos;
 	commandList->SetGraphicsRoot32BitConstants(0, 2, &cursor_pos, 2);
@@ -800,7 +816,7 @@ uint8_t *D3D12Backend::GetAnimBuffer()
  * Update video buffer texture after the video buffer was filled.
  * @param update_rect Rectangle encompassing the dirty region of the video buffer.
  */
-void D3D12Backend::ReleaseVideoBuffer(const Rect &update_rect)
+void D3D12Backend::ReleaseVideoBuffer([[maybe_unused]] const Rect &update_rect)
 {
 	return;
 }
@@ -810,14 +826,14 @@ void D3D12Backend::ReleaseVideoBuffer(const Rect &update_rect)
  * Update animation buffer texture after the animation buffer was filled.
  * @param update_rect Rectangle encompassing the dirty region of the animation buffer.
  */
-void D3D12Backend::ReleaseAnimBuffer(const Rect &update_rect)
+void D3D12Backend::ReleaseAnimBuffer([[maybe_unused]] const Rect &update_rect)
 {
 	return;
 }
 
 void D3D12Backend::UpdatePaletteResource()
 {
-	uint index = swapChain->GetCurrentBackBufferIndex();
+	uint index = CurrentFrameIndex();
 
 	if (paletteIsDirty[index]) {
 		
@@ -840,7 +856,13 @@ void D3D12Backend::UpdatePalette(const Colour *pal, uint first, uint length)
 
 void D3D12Backend::EnqueueFillRect(int left, int top, int right, int bottom, uint8_t colour)
 {
-	BlitRequest req = { left, top, right, bottom, 0, 0, colour, BlitType::SOLID_COLOUR, -1, ZOOM_LVL_BEGIN, 0, 0 };
+	BlitRequest req = { left, top, right, bottom, 0, 0, colour, BlitType::RECTANGLE };
+	blitRequests.push_back(req);
+}
+
+void D3D12Backend::EnqueueDrawLine(int x, int y, int x2, int y2, uint8_t colour, int width, int dash)
+{
+	BlitRequest req = { x, y, x2, y2, width, dash, colour, BlitType::LINE };
 	blitRequests.push_back(req);
 }
 
@@ -850,7 +872,7 @@ void D3D12Backend::EnqueueSpriteBlit(SpriteBlitRequest *request)
 		return;
 
 	BlitRequest req = { request->left, request->top, request->right, request->bottom, request->skip_left, request->skip_top, 0,
-		BlitType::SPRITE_ALPHA, request->gpuSpriteID, request->zoom, request->blitterMode, 0 };
+		BlitType::SPRITE, request->gpuSpriteID, request->zoom, request->blitterMode, 0 };
 
 	static uint s_highWatermark = 0;
 
@@ -860,11 +882,26 @@ void D3D12Backend::EnqueueSpriteBlit(SpriteBlitRequest *request)
 		// Allocate some space for the remap table
 		const uint spaceRequired = 256;
 
-		if (SIZE_OF_REMAP_BUFFER_UPLOAD_SPACE - remapBufferSpaceUsedThisFrame > spaceRequired) {
+		// Hash it.
+		UINT64 *ptr = (UINT64 *)request->remap;
+		UINT64 hash = 0;
 
-			uint currentFrameIndex = swapChain->GetCurrentBackBufferIndex();
-			char *dest = (char*)remap_buffer_mapped[currentFrameIndex];
-			memcpy(dest + remapBufferSpaceUsedThisFrame, request->remap, spaceRequired);
+		for (int i = 0; i < spaceRequired / sizeof(UINT64); i++) {
+			hash += ptr[i];
+		}
+
+		auto iter = remapBufferCache.find(hash);
+
+		if (iter != remapBufferCache.end()) {
+			// We can just use the last remap buffer again!
+			req.remapByteOffset = iter->second;
+		}
+		else if (SIZE_OF_REMAP_BUFFER_UPLOAD_SPACE - remapBufferSpaceUsedThisFrame > spaceRequired) {
+
+			char *dest = (char*)remap_buffer_mapped[CurrentFrameIndex()];
+			memcpy(dest + remapBufferSpaceUsedThisFrame, request->remap, spaceRequired);	// Todo, optimise?
+
+			remapBufferCache[hash] = remapBufferSpaceUsedThisFrame;
 
 			req.remapByteOffset = remapBufferSpaceUsedThisFrame;
 
@@ -873,17 +910,84 @@ void D3D12Backend::EnqueueSpriteBlit(SpriteBlitRequest *request)
 			if (remapBufferSpaceUsedThisFrame > s_highWatermark) {
 				s_highWatermark = remapBufferSpaceUsedThisFrame;
 
-				//char str[256];
-				//sprintf_s(str, "New high watermark: %u\n", s_highWatermark);
-				//OutputDebugStringA(str);
+				char str[256];
+				sprintf_s(str, "New high watermark: %u\n", s_highWatermark);
+				OutputDebugStringA(str);
 			}
 		}
 		else {
-			__debugbreak();
+			__debugbreak();	// Ran out of room
 		}
 	}
 
 	blitRequests.push_back(req);
+}
+
+void D3D12Backend::EnqueueDrawColourMappingRect(int x, int y, int width, int height, PaletteID pal)
+{
+	BlitRequest req = { x, y, x + width - 1, y + height - 1, 0, 0, 0,
+		BlitType::COLOUR_MAPPING_RECTANGLE, 0, 0, pal, 0 };
+
+	blitRequests.push_back(req);
+}
+
+void D3D12Backend::EnqueueCopyFromBackup(int x, int y, int width, int height)
+{
+	BlitRequest req = { x, y, x + width - 1, y + height - 1, 0, 0, 0, BlitType::COPY_FROM_BACKUP };
+	blitRequests.push_back(req);
+}
+
+void D3D12Backend::EnqueueCopyToBackup(int x, int y, int width, int height)
+{
+	BlitRequest req = { x, y, x + width - 1, y + height - 1, 0, 0, 0, BlitType::COPY_TO_BACKUP };
+	blitRequests.push_back(req);
+}
+
+void D3D12Backend::CopyImageToBuffer(void *dst, int x, int y, int width, int height, int dst_pitch)
+{
+	// Flush everything and get the GPU to copy to dst
+	FlushSpriteBuffer();
+	UpdatePaletteResource();
+
+	// Create a temporary screenshot buffer to hold just enough data to get what we're after...
+	D3D12_HEAP_PROPERTIES heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_CPU_PAGE_PROPERTY_WRITE_BACK, D3D12_MEMORY_POOL_L0);
+	D3D12_RESOURCE_DESC screenshotBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(dst_pitch * height * sizeof(uint), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+
+	ComPtr<ID3D12Resource> screenshotResource;
+	HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &screenshotBufferDesc,
+												D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(screenshotResource.ReleaseAndGetAddressOf()));
+	assert(SUCCEEDED(hr));
+
+	// Setup the copy
+	commandList->SetDescriptorHeaps(1, srvHeap.GetAddressOf());
+	commandList->SetPipelineState(screenshotCSPSO.Get());
+	commandList->SetComputeRootSignature(rootSignature.Get());
+
+	uint screenshotParams[4] = { (uint)x, (uint)y, (uint)width, (uint)dst_pitch };
+	commandList->SetComputeRoot32BitConstants(0, ARRAYSIZE(screenshotParams), screenshotParams, 0);
+
+	uint otherParams[2] = { 0, CurrentFrameIndex() };
+	commandList->SetComputeRoot32BitConstants(4, ARRAYSIZE(otherParams), otherParams, 0);
+
+	commandList->SetComputeRootDescriptorTable(1, srvHeap->GetGPUDescriptorHandleForHeapStart());
+	commandList->SetComputeRootUnorderedAccessView(5, screenshotResource->GetGPUVirtualAddress());
+
+	UINT numGroupsWidth = (width + 7) / 8;
+	commandList->Dispatch(numGroupsWidth, height, 1);
+
+	// Close the command list, execute it so we can get the images rendered.
+	EndRecording(false);
+	commandQueue->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList *const *>(commandList.GetAddressOf()));
+
+	WaitForGPU();
+
+	// memcpy to dst
+	void *srcPtr;
+	screenshotResource->Map(0, nullptr, &srcPtr);
+
+	memcpy(dst, srcPtr, screenshotBufferDesc.Width);
+
+	ResetRecording(false);
 }
 
 uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spriteColl)
@@ -922,8 +1026,12 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 			format = DXGI_FORMAT_R8G8_UINT;
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;// D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 1, 4, 4);	// Red, G, 0, 0
 		}
-		else {
-			format = DXGI_FORMAT_R8G8_UINT;
+		else if (sprite.colours == (SCC_RGB | SCC_ALPHA)) {
+			format = DXGI_FORMAT_R32_UINT;
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		}
+		else if (sprite.colours == SCC_MASK) {
+			format = DXGI_FORMAT_R32_UINT;
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;// D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 1, 4, 4);	// Red, G, 0, 0
 		}
 
@@ -942,19 +1050,33 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 
 		uint numTexels = sprite.width * sprite.height;
 
-		if (false){// sprite.colours == SCC_PAL) {
+		if (sprite.colours == (SCC_RGB | SCC_ALPHA) || sprite.colours == SCC_MASK) {
+			uint32_t *rgbaData = MallocT<uint32_t>(numTexels);
+
+			for (uint i = 0; i < numTexels; i++) {
+				uint32_t r = sprite.data[i].r;
+				uint32_t g = sprite.data[i].g;
+				uint32_t b = sprite.data[i].b;
+				uint32_t a = sprite.data[i].a;
+				rgbaData[i] = b | (g << 8) | (r << 16) | (a << 24);
+			}
+
+			(*zoomTex)->WriteToSubresource(0, nullptr, rgbaData, sprite.width * 4, 0);
+			free(rgbaData);
+		}
+		else if(false) {
 			// Copy just the 'm' channel
 			uint8_t *mData = MallocT<uint8_t>(numTexels);
 
-			for (int i = 0; i < numTexels; i++)
+			for (uint i = 0; i < numTexels; i++)
 				mData[i] = sprite.data[i].m;
 
 			(*zoomTex)->WriteToSubresource(0, nullptr, mData, sprite.width, 0);
 			free(mData);
-		} else if (sprite.colours == (SCC_ALPHA | SCC_PAL) || sprite.colours == (SCC_PAL)) {
+		} else if ((sprite.colours == (SCC_ALPHA | SCC_PAL)) || (sprite.colours == (SCC_PAL))) {
 			uint16_t *maData = MallocT<uint16_t>(numTexels);
 
-			for (int i = 0; i < numTexels; i++) {
+			for (uint i = 0; i < numTexels; i++) {
 				uint16_t m = sprite.data[i].m;
 				uint16_t a = sprite.data[i].a;
 				maData[i] = m | (a << 8);
@@ -963,7 +1085,6 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 			(*zoomTex)->WriteToSubresource(0, nullptr, maData, sprite.width * 2, 0);
 			free(maData);
 		}
-
 
 		D3D12_CPU_DESCRIPTOR_HANDLE textureHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
 		textureHandle.ptr += ((Descriptors::SPRITE_START + (nextGPUSpriteID * ZOOM_LVL_END) + z) * srvDescriptorSize);

@@ -158,7 +158,23 @@ public:
 	/**
 	 * Passes a request to the video driver to draw a solid-colour rectangle.
 	 */
-	virtual void EnqueueFillRect(int left, int top, int right, int bottom, uint8_t colour)
+	virtual void EnqueueFillRect([[maybe_unused]] int left, [[maybe_unused]] int top, [[maybe_unused]] int right, [[maybe_unused]] int bottom, [[maybe_unused]] uint8_t colour)
+	{
+		return;
+	}
+
+	/**
+	 * Passes a request to the video driver to draw a 2D line with thickness and colour.
+	 */
+	virtual void EnqueueDrawLine([[maybe_unused]] int x, [[maybe_unused]] int y, [[maybe_unused]] int x2, [[maybe_unused]] int y2, [[maybe_unused]] uint8_t colour, [[maybe_unused]] int width, [[maybe_unused]] int dash)
+	{
+		return;
+	}
+
+	/**
+	 * Passes a request to the video driver to draw a Sprite in a given location acnd in a specified way.
+	 */
+	virtual void EnqueueSpriteBlit([[maybe_unused]] SpriteBlitRequest* request)
 	{
 		return;
 	}
@@ -166,7 +182,32 @@ public:
 	/**
 	 * Passes a request to the video driver to draw a Sprite in a given location and in a specified way.
 	 */
-	virtual void EnqueueSpriteBlit(SpriteBlitRequest* request)
+	virtual void EnqueueDrawColourMappingRect([[maybe_unused]] int x, [[maybe_unused]] int y, [[maybe_unused]] int width, [[maybe_unused]] int height, [[maybe_unused]] PaletteID pal)
+	{
+		return;
+	}
+
+	/**
+	 * Passes a request to the video driver to copy some portion of the backup buffers back to the main surfaces.
+	 */
+	virtual void EnqueueCopyFromBackup([[maybe_unused]] int x, [[maybe_unused]] int y, [[maybe_unused]] int width, [[maybe_unused]] int height)
+	{
+		return;
+	}
+
+	/**
+	 * Passes a request to the video driver to copy some portion of the main surfaces to the backup copies.
+	 */
+	virtual void EnqueueCopyToBackup([[maybe_unused]] int x, [[maybe_unused]] int y, [[maybe_unused]] int width, [[maybe_unused]] int height)
+	{
+		return;
+	}
+
+	/**
+	 * Requests that the VideoDriver immediately (not enqueued) dump the fully flushed/rendered
+	 * region specified to the 'dst' buffer.
+	 */
+	virtual void CopyImageToBuffer([[maybe_unused]] void* dst, [[maybe_unused]] int x, [[maybe_unused]] int y, [[maybe_unused]] int width, [[maybe_unused]] int height, [[maybe_unused]] int dst_pitch)
 	{
 		return;
 	}
@@ -175,7 +216,7 @@ public:
 	 * Allows the video driver to create GPU resources associated with a given Sprite
 	 * @return Returns an opaque unique identifier to this set of sprites. 
 	 */
-	virtual uint32_t CreateGPUSprite(const SpriteLoader::SpriteCollection &sprite)
+	virtual uint32_t CreateGPUSprite([[maybe_unused]] const SpriteLoader::SpriteCollection &sprite)
 	{
 		return -1;
 	}
@@ -183,7 +224,7 @@ public:
 	/**
 	 * Requests the video driver scroll any persistent off-screen buffers such the Video buffer or Anim buffer. 
 	 */
-	virtual void ScrollBuffer(int &left, int &top, int &width, int &height, int scroll_x, int scroll_y)
+	virtual void ScrollBuffer([[maybe_unused]] int &left, [[maybe_unused]] int &top, [[maybe_unused]] int &width, [[maybe_unused]] int &height, [[maybe_unused]] int scroll_x, [[maybe_unused]] int scroll_y)
 	{
 		return;
 	}
