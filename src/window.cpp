@@ -3040,7 +3040,7 @@ void UpdateWindows()
 	auto now = std::chrono::steady_clock::now();
 	auto delta_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time);
 
-	if (delta_ms.count() == 0) return;
+	//if (delta_ms.count() == 0) return;
 
 	last_time = now;
 

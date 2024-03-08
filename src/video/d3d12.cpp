@@ -101,7 +101,7 @@ D3D12Backend::~D3D12Backend()
  */
 const char *D3D12Backend::Init()
 {
-#if _DEBUG
+#if 0//_DEBUG
 	ComPtr<ID3D12Debug> debugController;
 	if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(debugController.GetAddressOf())))) {
 		debugController->EnableDebugLayer();
@@ -114,22 +114,24 @@ const char *D3D12Backend::Init()
 
 	static bool useWarpDevice = false;
 
-	HRESULT hr;
+	ComPtr<IDXGIFactory4> factory;
+	HRESULT hr = CreateDXGIFactory2(DXGI_CREATE_FACTORY_DEBUG, IID_PPV_ARGS(&factory));
 
 	if (useWarpDevice) {
-		ComPtr<IDXGIFactory4> factory;
-		hr = CreateDXGIFactory2(DXGI_CREATE_FACTORY_DEBUG, IID_PPV_ARGS(&factory));
 
-		ComPtr<IDXGIAdapter> warpAdapter;
-		hr = factory->EnumWarpAdapter(IID_PPV_ARGS(&warpAdapter));
+		hr = factory->EnumWarpAdapter(IID_PPV_ARGS(&adapter));
 
-		hr = D3D12CreateDevice(warpAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(device.ReleaseAndGetAddressOf()));
+		hr = D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(device.ReleaseAndGetAddressOf()));
 		device->SetName(L"OpenTTD D3D12 Device");
 	}
 	else {
+		hr = factory->EnumAdapters(0, adapter.ReleaseAndGetAddressOf());
+
 		hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(device.ReleaseAndGetAddressOf()));
 		device->SetName(L"OpenTTD D3D12 Device");
 	}
+
+	adapter->QueryInterface(IID_PPV_ARGS(adapter3.ReleaseAndGetAddressOf()));
 
 	if (FAILED(hr))
 		return "Failed to create D3D12 Device at Feature Level 11.0";
@@ -194,8 +196,8 @@ const char *D3D12Backend::Init()
 	csPSODesc.CS = { g_ScrollYCS, sizeof(g_ScrollYCS) };
 	hr = device->CreateComputePipelineState(&csPSODesc, IID_PPV_ARGS(scrollYPSO.ReleaseAndGetAddressOf()));
 
-	csPSODesc.CS = { g_BlitCS, sizeof(g_BlitCS) };
-	hr = device->CreateComputePipelineState(&csPSODesc, IID_PPV_ARGS(blitCSPSO.ReleaseAndGetAddressOf()));
+	//csPSODesc.CS = { g_BlitCS, sizeof(g_BlitCS) };
+	//hr = device->CreateComputePipelineState(&csPSODesc, IID_PPV_ARGS(blitCSPSO.ReleaseAndGetAddressOf()));
 
 	csPSODesc.CS = { g_ScreenshotCopyCS, sizeof(g_ScreenshotCopyCS) };
 	hr = device->CreateComputePipelineState(&csPSODesc, IID_PPV_ARGS(screenshotCSPSO.ReleaseAndGetAddressOf()));
@@ -263,6 +265,22 @@ const char *D3D12Backend::Init()
 		}
 	}
 
+	{
+		D3D12_COMMAND_QUEUE_DESC copyQueueDesc = {};
+		copyQueueDesc.Type = D3D12_COMMAND_LIST_TYPE_COPY;
+
+		hr = device->CreateCommandQueue(&copyQueueDesc, IID_PPV_ARGS(copyQueue.ReleaseAndGetAddressOf()));
+
+		for(int i = 0; i < SWAP_CHAIN_BACK_BUFFER_COUNT; i++) {
+			hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY, IID_PPV_ARGS(copyCommandAllocators[i].ReleaseAndGetAddressOf()));
+		}
+
+		hr = device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_COPY, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(copyCommandList.ReleaseAndGetAddressOf()));
+		hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(copyFence.ReleaseAndGetAddressOf()));
+	}
+
+	InitializeCriticalSection(&copyCLLock);
+
 	ResetRecording();
 
 	return nullptr;
@@ -274,6 +292,9 @@ void D3D12Backend::ResetRecording(bool beginTimestamp)
 
 	commandAllocators[frameIndex]->Reset();
 	commandList->Reset(commandAllocators[frameIndex].Get(), nullptr);
+
+	copyCommandAllocators[frameIndex]->Reset();
+	copyCommandList->Reset(copyCommandAllocators[frameIndex].Get(), nullptr);
 
 	if (beginTimestamp) {
 		commandList->EndQuery(timestampQueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, frameIndex * 2);
@@ -290,6 +311,7 @@ void D3D12Backend::EndRecording(bool endTimestamp)
 	}
 
 	commandList->Close();
+	copyCommandList->Close();
 }
 
 void D3D12Backend::WaitForGPU()
@@ -404,8 +426,16 @@ void D3D12Backend::Present()
 		swapChainResourceState = D3D12_RESOURCE_STATE_PRESENT;
 	}
 
+	EnterCriticalSection(&copyCLLock);
+
 	EndRecording();
 
+	// Before we execute the graphics command list we need to make sure that the copy command list has
+	// been executed and has finished copying.
+	copyQueue->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList *const *>(copyCommandList.GetAddressOf()));
+	copyQueue->Signal(copyFence.Get(), ++nextFenceValue);
+	
+	commandQueue->Wait(copyFence.Get(), nextFenceValue);
 	commandQueue->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList *const *>(commandList.GetAddressOf()));
 
 	frameEndValues[frameIndex] = ++nextFenceValue;
@@ -432,6 +462,10 @@ void D3D12Backend::Present()
 	}
 
 	frameIndex = CurrentFrameIndex();
+		
+	ResetRecording();
+
+	LeaveCriticalSection(&copyCLLock);
 
 	blitRequestsAddedThisFrame = 0;
 	remapBufferSpaceUsedThisFrame = 0;
@@ -460,7 +494,6 @@ void D3D12Backend::Present()
 		nextGpuFrameTimeSlot = (nextGpuFrameTimeSlot + 1) % FRAME_TIME_HISTORY_LENGTH;
 	}
 
-	ResetRecording();
 
 	static int frames = 0;
 
@@ -479,6 +512,8 @@ void D3D12Backend::Present()
 		frames = 0;
 		start = now;
 	}
+
+	//OutputDebugStringA("F\n");
 
 	frames++;
 
@@ -1000,6 +1035,7 @@ void D3D12Backend::CopyImageToBuffer(void *dst, int x, int y, int width, int hei
 
 	// Close the command list, execute it so we can get the images rendered.
 	EndRecording(false);
+
 	commandQueue->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList *const *>(commandList.GetAddressOf()));
 
 	WaitForGPU();
@@ -1016,7 +1052,11 @@ void D3D12Backend::CopyImageToBuffer(void *dst, int x, int y, int width, int hei
 uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spriteColl)
 {
 	// TODO - Don't put the sprites in system memory!
-	D3D12_HEAP_PROPERTIES heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE, D3D12_MEMORY_POOL_L0);
+	D3D12_HEAP_PROPERTIES defaultProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+	D3D12_HEAP_PROPERTIES uploadProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+
+	ComPtr<ID3D12Resource> uploadResources[6];
+	ComPtr<ID3D12Resource> defaultResources[6];
 
 	SpriteResourceSet spriteZoomSet = {};
 
@@ -1031,6 +1071,8 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 		zoom_max = (ZoomLevel)(ZOOM_LVL_END - 1);	// TODO get client settings.
 		if (zoom_max == zoom_min) zoom_max = ZOOM_LVL_MAX;
 	}
+
+	EnterCriticalSection(&copyCLLock);
 
 	for (int z = zoom_min; z <= zoom_max; z++) {
 
@@ -1060,61 +1102,108 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 
 		srvDesc.Format = format;
 
-		D3D12_RESOURCE_DESC resDesc = CD3DX12_RESOURCE_DESC::Tex2D(format, sprite.width, sprite.height, 1, 1);
+		D3D12_RESOURCE_DESC defaultResDesc = CD3DX12_RESOURCE_DESC::Tex2D(format, sprite.width, sprite.height, 1, 1);
 
-		ID3D12Resource **zoomTex = &spriteZoomSet.spriteResources[z];
+		DXGI_QUERY_VIDEO_MEMORY_INFO infoBefore, infoAfter;
+		adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &infoBefore);
 
-		HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(zoomTex));
+		HRESULT hr = device->CreateCommittedResource(&defaultProps, D3D12_HEAP_FLAG_NONE, &defaultResDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(defaultResources[z].ReleaseAndGetAddressOf()));
 		assert(SUCCEEDED(hr));
 
-		// TODO - Don't have the textures in a System Memory heap - this is just for testing! Awful perf!
-		hr = (*zoomTex)->Map(0, nullptr, nullptr);
-		assert(SUCCEEDED(hr));
+		adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &infoAfter);
+
+		UINT64 requiredMemory = infoAfter.Budget - infoBefore.Budget;
+
+		char str[256];
+		sprintf_s(str, "Required memory: %llu\n", requiredMemory);
+		//OutputDebugStringA(str);
+
+		// Get copyable footprints to figure out how big the upload buffer has to be
+		D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
+		UINT numRows;
+		UINT64 rowSizeInBytes;
+		UINT64 totalBytes;
+		device->GetCopyableFootprints(&defaultResDesc, 0, 1, 0, &footprint, &numRows, &rowSizeInBytes, &totalBytes);
+
+		// Create the upload buffer
+		D3D12_RESOURCE_DESC desc = CD3DX12_RESOURCE_DESC::Buffer(totalBytes);
+		hr = device->CreateCommittedResource(&uploadProps, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(uploadResources[z].ReleaseAndGetAddressOf()));
+
+		void *uploadPtr;
+		hr = uploadResources[z]->Map(0, nullptr, &uploadPtr);
 
 		uint numTexels = sprite.width * sprite.height;
 
 		if (sprite.colours == (SCC_RGB | SCC_ALPHA) || sprite.colours == SCC_MASK) {
-			uint32_t *rgbaData = MallocT<uint32_t>(numTexels);
+			for(uint y = 0; y < sprite.height; y++) {
 
-			for (uint i = 0; i < numTexels; i++) {
-				uint32_t r = sprite.data[i].r;
-				uint32_t g = sprite.data[i].g;
-				uint32_t b = sprite.data[i].b;
-				uint32_t a = sprite.data[i].a;
-				rgbaData[i] = b | (g << 8) | (r << 16) | (a << 24);
+				uint32_t* row = (uint32_t*)((char*)uploadPtr + footprint.Offset + (y * footprint.Footprint.RowPitch));
+				for(uint x = 0; x < sprite.width; x++) {
+					uint i = y * sprite.width + x;
+					uint32_t r = sprite.data[i].r;
+					uint32_t g = sprite.data[i].g;
+					uint32_t b = sprite.data[i].b;
+					uint32_t a = sprite.data[i].a;
+					row[x] = b | (g << 8) | (r << 16) | (a << 24);
+				}
 			}
-
-			(*zoomTex)->WriteToSubresource(0, nullptr, rgbaData, sprite.width * 4, 0);
-			free(rgbaData);
 		}
 		else if(false) {
 			// Copy just the 'm' channel
 			uint8_t *mData = MallocT<uint8_t>(numTexels);
 
-			for (uint i = 0; i < numTexels; i++)
-				mData[i] = sprite.data[i].m;
-
-			(*zoomTex)->WriteToSubresource(0, nullptr, mData, sprite.width, 0);
 			free(mData);
-		} else if ((sprite.colours == (SCC_ALPHA | SCC_PAL)) || (sprite.colours == (SCC_PAL))) {
-			uint16_t *maData = MallocT<uint16_t>(numTexels);
-
-			for (uint i = 0; i < numTexels; i++) {
-				uint16_t m = sprite.data[i].m;
-				uint16_t a = sprite.data[i].a;
-				maData[i] = m | (a << 8);
-			}
-
-			(*zoomTex)->WriteToSubresource(0, nullptr, maData, sprite.width * 2, 0);
-			free(maData);
 		}
+		else if ((sprite.colours == (SCC_ALPHA | SCC_PAL)) || (sprite.colours == (SCC_PAL))) {
+			for(uint y = 0; y < sprite.height; y++) {
+
+				uint16_t* row = (uint16_t*)((char*)uploadPtr + footprint.Offset + (y * footprint.Footprint.RowPitch));
+				for(uint x = 0; x < sprite.width; x++) {
+					uint i = y * sprite.width + x;
+					uint16_t m = sprite.data[i].m;
+					uint16_t a = sprite.data[i].a;
+					row[x] = m | (a << 8);
+				}
+			}
+		}
+
+		uploadResources[z]->Unmap(0, nullptr);
+
+		// Transition dst from copy dest to all shader resource
+		D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(defaultResources[z].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON);
+		copyCommandList->ResourceBarrier(1, &barrier);
+
+		// Copy the upload resource to the default resource
+		D3D12_TEXTURE_COPY_LOCATION src = {};
+		src.pResource = uploadResources[z].Get();
+		src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+		src.PlacedFootprint = footprint;
+
+		D3D12_TEXTURE_COPY_LOCATION dst = {};
+		dst.pResource = defaultResources[z].Get();
+		dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+		dst.SubresourceIndex = 0;
+
+		copyCommandList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
 
 		D3D12_CPU_DESCRIPTOR_HANDLE textureHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
 		textureHandle.ptr += ((Descriptors::SPRITE_START + (nextGPUSpriteID * ZOOM_LVL_END) + z) * srvDescriptorSize);
 
-		device->CreateShaderResourceView(*zoomTex, &srvDesc, textureHandle);
+		device->CreateShaderResourceView(defaultResources[z].Get(), &srvDesc, textureHandle);
 	}
-	
+
+	LeaveCriticalSection(&copyCLLock);
+
+	for(int i = 0; i < ZOOM_LVL_END; i++) {
+		if (defaultResources[i] != nullptr) {
+			defaultResources[i]->AddRef();
+			spriteZoomSet.spriteResources[i] = defaultResources[i].Get();
+
+			ULONG refCount = uploadResources[i]->AddRef();
+			uploadResourcesToDestroy[CurrentFrameIndex()].push_back(uploadResources[i].Get());
+		}
+	}
+
 	spriteResources.push_back(spriteZoomSet);
 
 	return nextGPUSpriteID++;

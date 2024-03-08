@@ -1,6 +1,6 @@
 #include "cpp_hlsl_shared.h"
 
-#define RootSig "RootConstants(b0, num32bitconstants=12), DescriptorTable(UAV(u0, numdescriptors=4), SRV(t0, numdescriptors=3)), DescriptorTable(SRV(t0, space=1, numdescriptors=unbounded, flags = DESCRIPTORS_VOLATILE)), SRV(t3), RootConstants(b1, num32bitconstants=2), UAV(u4), SRV(t4)"
+#define RootSig "RootConstants(b0, num32bitconstants=12), DescriptorTable(UAV(u0, numdescriptors=4), SRV(t0, numdescriptors=2)), DescriptorTable(SRV(t0, space=1, numdescriptors=unbounded, flags = DESCRIPTORS_VOLATILE)), SRV(t3), RootConstants(b1, num32bitconstants=2), UAV(u4), SRV(t4)"
 
 // Copy-paste of the one in base.hpp for blitters
 /** The modes of blitting we can do. */
@@ -75,7 +75,7 @@ RasterizerOrderedTexture2D<uint> dst_rov : register(u1);
 RasterizerOrderedTexture2D<uint> backup_remap_rov : register(u2);
 RasterizerOrderedTexture2D<uint> backup_dst_rov : register(u3);
 
-Buffer<uint> palette[3] : register(t0);
+Buffer<uint> palette[2] : register(t0);
 ByteAddressBuffer remap_buffer : register(t3);
 StructuredBuffer<BlitRequest> blitRequestBuffer : register(t4);
 
@@ -423,7 +423,7 @@ BlitOutput CalculateOutputs(uint2 DTid, uint2 screenCoord, BlitRequest req, bool
 		uint2 skipAmount = req.GetSkipOffset();	
 		uint2 spriteLocalCoord = DTid + skipAmount;
 		uint textureID = (req.gpuSpriteID * 6) + req.zoom;
-		uint2 spriteTexelData = spriteTextures[textureID][spriteLocalCoord];
+		uint2 spriteTexelData = spriteTextures[NonUniformResourceIndex(textureID)][spriteLocalCoord];
 		
 		uint m = spriteTexelData.r;
 		uint a = spriteTexelData.g;

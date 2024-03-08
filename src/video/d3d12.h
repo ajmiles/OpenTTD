@@ -39,6 +39,9 @@ using Microsoft::WRL::ComPtr;
 
 class D3D12Sprite;
 
+
+#define SWAP_CHAIN_BACK_BUFFER_COUNT 2
+
 enum Descriptors {
 	ANIM_TEXTURE,
 	VID_TEXTURE,
@@ -47,7 +50,6 @@ enum Descriptors {
 
 	PALETTE_TEXTURE_0,
 	PALETTE_TEXTURE_1,
-	PALETTE_TEXTURE_2,
 
 	SPRITE_START,
 	DESCRIPTOR_COUNT = SPRITE_START + (MAX_SPRITES_SUPPORTED * ZOOM_LVL_END)
@@ -72,11 +74,13 @@ class D3D12Backend : public ZeroedMemoryAllocator {
 private:
 	static D3D12Backend *instance; ///< Singleton instance pointer.
 
-	static const uint SWAP_CHAIN_BACK_BUFFER_COUNT = 3;
 
 	// DXGI / D3D12 Resources
 	ComPtr<IDXGIFactory2> dxgiFactory;
-	
+
+	ComPtr<IDXGIAdapter> adapter;
+	ComPtr<IDXGIAdapter3> adapter3;
+
 	ComPtr<ID3D12Device4> device;
 	ComPtr<ID3D12CommandQueue> commandQueue;
 	ComPtr<IDXGISwapChain3> swapChain;
@@ -96,7 +100,14 @@ private:
 	ComPtr<ID3D12DescriptorHeap> srvHeap;
 	uint32_t srvDescriptorSize;
 
-	
+	ComPtr<ID3D12CommandQueue> copyQueue;
+	ComPtr<ID3D12CommandAllocator> copyCommandAllocators[SWAP_CHAIN_BACK_BUFFER_COUNT];
+	ComPtr<ID3D12GraphicsCommandList> copyCommandList;
+	ComPtr<ID3D12Fence> copyFence;
+
+	std::vector<ID3D12Resource*> uploadResourcesToDestroy[SWAP_CHAIN_BACK_BUFFER_COUNT];
+
+	CRITICAL_SECTION copyCLLock;
 
 	static const uint SIZE_OF_REMAP_BUFFER_UPLOAD_SPACE = 64 * 1024;	// TODO: Use a growable reserved resource
 

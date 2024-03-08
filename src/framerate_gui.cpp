@@ -32,6 +32,10 @@
 
 #include "safeguards.h"
 
+#if WIN32
+#include <Windows.h>
+#endif
+
 static std::mutex _sound_perf_lock;
 static std::atomic<bool> _sound_perf_pending;
 static std::vector<TimingMeasurement> _sound_perf_measurements;
@@ -275,7 +279,20 @@ PerformanceMeasurer::~PerformanceMeasurer()
 		_sound_perf_pending.store(true, std::memory_order_release);
 		return;
 	}
-	_pf_data[this->elem].Add(this->start_time, GetPerformanceTimer());
+
+	auto endTime = GetPerformanceTimer();
+
+	uint64_t diff = endTime - this->start_time;
+
+	double milliseconds = (double)diff / TIMESTAMP_PRECISION * 1000;
+
+	if (this->elem == PFE_DRAWING) {
+		char buf[256];
+		sprintf_s(buf, sizeof(buf), "Drawing: %.2f ms\n", milliseconds);
+		//OutputDebugStringA(buf);
+	}
+
+	_pf_data[this->elem].Add(this->start_time, endTime);
 }
 
 /** Set the rate of expected cycles per second of a performance element. */

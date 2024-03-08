@@ -22,6 +22,8 @@
 #include "../window_func.h"
 #include "video_driver.hpp"
 
+#include <Windows.h>
+
 bool _video_hw_accel; ///< Whether to consider hardware accelerated video drivers on startup.
 bool _video_vsync; ///< Whether we should use vsync (only if active video driver supports HW acceleration).
 
@@ -149,7 +151,8 @@ void VideoDriver::Tick()
 			/* Prevent drawing when switching mode, as windows can be removed when they should still appear. */
 			if (_game_mode == GM_BOOTSTRAP || _switch_mode == SM_NONE || HasModalProgress()) {
 				::UpdateWindows();
-			}
+			} else
+				OutputDebugStringA("Skip\n");
 
 			this->PopulateSystemSprites();
 		}
