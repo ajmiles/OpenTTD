@@ -101,7 +101,7 @@ D3D12Backend::~D3D12Backend()
  */
 const char *D3D12Backend::Init()
 {
-#if 0//_DEBUG
+#if _DEBUG
 	ComPtr<ID3D12Debug> debugController;
 	if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(debugController.GetAddressOf())))) {
 		debugController->EnableDebugLayer();
@@ -270,13 +270,18 @@ const char *D3D12Backend::Init()
 		copyQueueDesc.Type = D3D12_COMMAND_LIST_TYPE_COPY;
 
 		hr = device->CreateCommandQueue(&copyQueueDesc, IID_PPV_ARGS(copyQueue.ReleaseAndGetAddressOf()));
+		copyQueue->SetName(L"OpenTTD D3D12 Copy Command Queue");
 
 		for(int i = 0; i < SWAP_CHAIN_BACK_BUFFER_COUNT; i++) {
 			hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY, IID_PPV_ARGS(copyCommandAllocators[i].ReleaseAndGetAddressOf()));
+			copyCommandAllocators[i]->SetName(L"Copy Command Allocator");
 		}
 
 		hr = device->CreateCommandList1(0, D3D12_COMMAND_LIST_TYPE_COPY, D3D12_COMMAND_LIST_FLAG_NONE, IID_PPV_ARGS(copyCommandList.ReleaseAndGetAddressOf()));
 		hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(copyFence.ReleaseAndGetAddressOf()));
+
+		copyCommandList->SetName(L"Copy Command List");
+		copyFence->SetName(L"Copy Fence");
 	}
 
 	InitializeCriticalSection(&copyCLLock);
@@ -462,11 +467,7 @@ void D3D12Backend::Present()
 	}
 
 	frameIndex = CurrentFrameIndex();
-		
-	ResetRecording();
-
-	LeaveCriticalSection(&copyCLLock);
-
+	
 	blitRequestsAddedThisFrame = 0;
 	remapBufferSpaceUsedThisFrame = 0;
 	remapBufferCache.clear();
@@ -476,6 +477,16 @@ void D3D12Backend::Present()
 
 	fence->SetEventOnCompletion(frameEndValues[frameIndex], fenceEvent);
 	WaitForSingleObject(fenceEvent, INFINITE);
+
+	// Delete all the upload resources we no long need
+	for (auto res : uploadResourcesToDestroy[frameIndex]) {
+		res->Release();
+	}
+
+	uploadResourcesToDestroy[frameIndex].clear();
+
+	ResetRecording();	// Make sure to reset the copy allocator inside the critical section so we know we aren't recording commands. TODO, make this better.
+	LeaveCriticalSection(&copyCLLock);
 
 	PIXEndEvent();
 
@@ -1072,72 +1083,106 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 		if (zoom_max == zoom_min) zoom_max = ZOOM_LVL_MAX;
 	}
 
+	// Calculate the size of the heap required
+	D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[ZOOM_LVL_END] = {};
+	D3D12_RESOURCE_DESC defaultDescs[ZOOM_LVL_END];
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDescs[ZOOM_LVL_END] = {};
+	D3D12_RESOURCE_BARRIER barriers[ZOOM_LVL_END];
+
+	UINT totalUploadBytes = 0;
+
+	for (int z = zoom_min; z <= zoom_max; z++) {
+
+		const SpriteLoader::Sprite &sprite = spriteColl[z];
+		D3D12_SHADER_RESOURCE_VIEW_DESC &srvDesc = srvDescs[z];
+
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MipLevels = 1;
+		
+		if (sprite.colours == SCC_PAL) {
+			srvDesc.Format = DXGI_FORMAT_R8G8_UINT;
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;// D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 1, 4, 4);	// Red, G, 0, 0
+		}
+		else if (sprite.colours == (SCC_ALPHA | SCC_PAL)) {
+			srvDesc.Format = DXGI_FORMAT_R8G8_UINT;
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;// D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 1, 4, 4);	// Red, G, 0, 0
+		}
+		else if (sprite.colours == (SCC_RGB | SCC_ALPHA)) {
+			srvDesc.Format = DXGI_FORMAT_R32_UINT;
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		}
+		else if (sprite.colours == SCC_MASK) {
+			srvDesc.Format = DXGI_FORMAT_R32_UINT;
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;// D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 1, 4, 4);	// Red, G, 0, 0
+		}
+		else {
+			__debugbreak();
+		}
+
+		// Check if this resource is eligible for 4KB Small Alignment
+		defaultDescs[z] = CD3DX12_RESOURCE_DESC::Tex2D(srvDesc.Format, sprite.width, sprite.height, 1, 1);
+		defaultDescs[z].Alignment = D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT;
+
+		D3D12_RESOURCE_ALLOCATION_INFO info = device->GetResourceAllocationInfo(0, 1, &defaultDescs[z]);
+
+		if(info.Alignment != D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT) {
+			defaultDescs[z].Alignment = 0;
+		}
+
+		// Get copyable footprints to figure out how big the upload buffer has to be
+		
+		UINT numRows;
+		UINT64 rowSizeInBytes;
+		UINT64 uploadBytes;
+		device->GetCopyableFootprints(&defaultDescs[z], 0, 1, 0, &footprints[z], &numRows, &rowSizeInBytes, &uploadBytes);
+
+		// Round up the total size to the footprint alignment
+		footprints[z].Offset = totalUploadBytes;
+		totalUploadBytes += Align(uploadBytes, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
+	}
+
+	int numTexturesNeeded = zoom_max - zoom_min + 1;
+
+	D3D12_RESOURCE_ALLOCATION_INFO1 defaultAllocInfos[ZOOM_LVL_END];
+	auto defaultHeapInfo = device->GetResourceAllocationInfo1(0, numTexturesNeeded, defaultDescs, defaultAllocInfos);
+
+	// Create a heap for the default resources
+	D3D12_HEAP_DESC heapDesc = {};
+	heapDesc.SizeInBytes = defaultHeapInfo.SizeInBytes;
+	heapDesc.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;
+	heapDesc.Flags = D3D12_HEAP_FLAG_CREATE_NOT_ZEROED;
+
+	ComPtr<ID3D12Heap> defaultHeap;
+	HRESULT hr = device->CreateHeap(&heapDesc, IID_PPV_ARGS(defaultHeap.ReleaseAndGetAddressOf()));
+
+	D3D12_RESOURCE_DESC uploadDesc = CD3DX12_RESOURCE_DESC::Buffer(totalUploadBytes);
+
+	ComPtr<ID3D12Resource> uploadResource;
+	hr = device->CreateCommittedResource(&uploadProps, D3D12_HEAP_FLAG_NONE, &uploadDesc,
+										D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(uploadResource.ReleaseAndGetAddressOf()));
+
+	spriteZoomSet.resourceHeap = defaultHeap.Get();
+
+	void *uploadPtr;
+	hr = uploadResource->Map(0, nullptr, &uploadPtr);
+
 	EnterCriticalSection(&copyCLLock);
+
+	defaultTextureMemoryUsage += defaultHeap->GetDesc().SizeInBytes;
 
 	for (int z = zoom_min; z <= zoom_max; z++) {
 
 		const SpriteLoader::Sprite &sprite = spriteColl[z];
 
-		DXGI_FORMAT format;
-		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-		srvDesc.Texture2D.MipLevels = 1;
-		
-		if (sprite.colours == SCC_PAL) {
-			format = DXGI_FORMAT_R8G8_UINT;
-			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;// D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 1, 4, 4);	// Red, G, 0, 0
-		}
-		else if (sprite.colours == (SCC_ALPHA | SCC_PAL)) {
-			format = DXGI_FORMAT_R8G8_UINT;
-			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;// D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 1, 4, 4);	// Red, G, 0, 0
-		}
-		else if (sprite.colours == (SCC_RGB | SCC_ALPHA)) {
-			format = DXGI_FORMAT_R32_UINT;
-			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-		}
-		else if (sprite.colours == SCC_MASK) {
-			format = DXGI_FORMAT_R32_UINT;
-			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;// D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 1, 4, 4);	// Red, G, 0, 0
-		}
-
-		srvDesc.Format = format;
-
-		D3D12_RESOURCE_DESC defaultResDesc = CD3DX12_RESOURCE_DESC::Tex2D(format, sprite.width, sprite.height, 1, 1);
-
-		DXGI_QUERY_VIDEO_MEMORY_INFO infoBefore, infoAfter;
-		adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &infoBefore);
-
-		HRESULT hr = device->CreateCommittedResource(&defaultProps, D3D12_HEAP_FLAG_NONE, &defaultResDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(defaultResources[z].ReleaseAndGetAddressOf()));
+		HRESULT hr = device->CreatePlacedResource(defaultHeap.Get(), defaultAllocInfos[z].Offset, &defaultDescs[z], D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(defaultResources[z].ReleaseAndGetAddressOf()));
 		assert(SUCCEEDED(hr));
-
-		adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &infoAfter);
-
-		UINT64 requiredMemory = infoAfter.Budget - infoBefore.Budget;
-
-		char str[256];
-		sprintf_s(str, "Required memory: %llu\n", requiredMemory);
-		//OutputDebugStringA(str);
-
-		// Get copyable footprints to figure out how big the upload buffer has to be
-		D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
-		UINT numRows;
-		UINT64 rowSizeInBytes;
-		UINT64 totalBytes;
-		device->GetCopyableFootprints(&defaultResDesc, 0, 1, 0, &footprint, &numRows, &rowSizeInBytes, &totalBytes);
-
-		// Create the upload buffer
-		D3D12_RESOURCE_DESC desc = CD3DX12_RESOURCE_DESC::Buffer(totalBytes);
-		hr = device->CreateCommittedResource(&uploadProps, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(uploadResources[z].ReleaseAndGetAddressOf()));
-
-		void *uploadPtr;
-		hr = uploadResources[z]->Map(0, nullptr, &uploadPtr);
-
+				
 		uint numTexels = sprite.width * sprite.height;
 
 		if (sprite.colours == (SCC_RGB | SCC_ALPHA) || sprite.colours == SCC_MASK) {
 			for(uint y = 0; y < sprite.height; y++) {
 
-				uint32_t* row = (uint32_t*)((char*)uploadPtr + footprint.Offset + (y * footprint.Footprint.RowPitch));
+				uint32_t* row = (uint32_t*)((char*)uploadPtr + footprints[z].Offset + (y * footprints[z].Footprint.RowPitch));
 				for(uint x = 0; x < sprite.width; x++) {
 					uint i = y * sprite.width + x;
 					uint32_t r = sprite.data[i].r;
@@ -1157,7 +1202,7 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 		else if ((sprite.colours == (SCC_ALPHA | SCC_PAL)) || (sprite.colours == (SCC_PAL))) {
 			for(uint y = 0; y < sprite.height; y++) {
 
-				uint16_t* row = (uint16_t*)((char*)uploadPtr + footprint.Offset + (y * footprint.Footprint.RowPitch));
+				uint16_t* row = (uint16_t*)((char*)uploadPtr + footprints[z].Offset + (y * footprints[z].Footprint.RowPitch));
 				for(uint x = 0; x < sprite.width; x++) {
 					uint i = y * sprite.width + x;
 					uint16_t m = sprite.data[i].m;
@@ -1167,17 +1212,16 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 			}
 		}
 
-		uploadResources[z]->Unmap(0, nullptr);
-
 		// Transition dst from copy dest to all shader resource
 		D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(defaultResources[z].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON);
-		copyCommandList->ResourceBarrier(1, &barrier);
+		//copyCommandList->ResourceBarrier(1, &barrier);
+		//barriers[z] = CD3DX12_RESOURCE_BARRIER::Transition(defaultResources[z].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON);
 
 		// Copy the upload resource to the default resource
 		D3D12_TEXTURE_COPY_LOCATION src = {};
-		src.pResource = uploadResources[z].Get();
+		src.pResource = uploadResource.Get();
 		src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-		src.PlacedFootprint = footprint;
+		src.PlacedFootprint = footprints[z];
 
 		D3D12_TEXTURE_COPY_LOCATION dst = {};
 		dst.pResource = defaultResources[z].Get();
@@ -1189,8 +1233,10 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 		D3D12_CPU_DESCRIPTOR_HANDLE textureHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
 		textureHandle.ptr += ((Descriptors::SPRITE_START + (nextGPUSpriteID * ZOOM_LVL_END) + z) * srvDescriptorSize);
 
-		device->CreateShaderResourceView(defaultResources[z].Get(), &srvDesc, textureHandle);
+		device->CreateShaderResourceView(defaultResources[z].Get(), &srvDescs[z], textureHandle);
 	}
+
+	//copyCommandList->ResourceBarrier(numTexturesNeeded, barriers);
 
 	LeaveCriticalSection(&copyCLLock);
 
@@ -1198,11 +1244,11 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 		if (defaultResources[i] != nullptr) {
 			defaultResources[i]->AddRef();
 			spriteZoomSet.spriteResources[i] = defaultResources[i].Get();
-
-			ULONG refCount = uploadResources[i]->AddRef();
-			uploadResourcesToDestroy[CurrentFrameIndex()].push_back(uploadResources[i].Get());
 		}
 	}
+
+	ULONG refCount = uploadResource->AddRef();
+	uploadResourcesToDestroy[CurrentFrameIndex()].push_back(uploadResource.Get());
 
 	spriteResources.push_back(spriteZoomSet);
 

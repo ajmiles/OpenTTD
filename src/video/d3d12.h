@@ -56,6 +56,7 @@ enum Descriptors {
 };
 
 struct SpriteResourceSet {
+	ID3D12Heap *resourceHeap;
 	ID3D12Resource *spriteResources[ZOOM_LVL_END];
 };
 
@@ -108,6 +109,7 @@ private:
 	std::vector<ID3D12Resource*> uploadResourcesToDestroy[SWAP_CHAIN_BACK_BUFFER_COUNT];
 
 	CRITICAL_SECTION copyCLLock;
+	size_t defaultTextureMemoryUsage = 0;
 
 	static const uint SIZE_OF_REMAP_BUFFER_UPLOAD_SPACE = 64 * 1024;	// TODO: Use a growable reserved resource
 

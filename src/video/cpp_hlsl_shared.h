@@ -24,18 +24,18 @@ enum BlitType {
 
 struct BlitRequest
 {
-	int left;
-	int top;
-	int right;
-	int bottom;
-	int skip_left;
-	int skip_top;
-	uint colour;
-	BlitType blitType;
-	uint gpuSpriteID;
-	uint zoom;
-	uint blitterMode;
-	uint remapByteOffset;
+	int left : 16;
+	int top: 16;
+	int right: 16;
+	int bottom: 16;
+	int skip_left: 16;
+	int skip_top: 16;
+	uint colour : 8;
+	BlitType blitType : 3;
+	uint gpuSpriteID : 17;
+	uint zoom : 4;
+	uint blitterMode : 3;
+	uint remapByteOffset : 13;	// More than it needs to be
 	
 #if !defined(__cplusplus)
 	uint2 GetBlitDimensions()
