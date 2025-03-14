@@ -640,7 +640,7 @@ cbuffer ScrollParams : register(b0)
 };
 
 // TODO - investigate what the best thread group size is for this
-#define THREAD_GROUP_SIZE 128
+#define THREAD_GROUP_SIZE 1024
 
 [RootSignature(RootSig)]
 [numthreads(THREAD_GROUP_SIZE, 1, 1)]

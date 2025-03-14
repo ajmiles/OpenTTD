@@ -42,7 +42,7 @@
 #include "ROVPS.csh"
 #include "ScrollXCS.csh"
 #include "ScrollYCS.csh"
-#include "BlitCS.csh"
+//#include "BlitCS.csh"
 #include "ScreenshotCopyCS.csh"
 
 /** A simple 2D vertex with just position and texture. */
