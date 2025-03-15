@@ -13,9 +13,11 @@
 #	include <windows.h>
 #endif
 
+
 #if defined(_MSC_VER)
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "WinPixEventRuntime.lib")
 #endif /* defined(_MSC_VER) */
 
 #include "d3d12.h"
@@ -1083,6 +1085,45 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 		if (zoom_max == zoom_min) zoom_max = ZOOM_LVL_MAX;
 	}
 
+	auto prevWidth = spriteColl[0].width;
+	auto prevHeight = spriteColl[0].height;
+
+	for (int z = zoom_min + 1; z <= zoom_max; z++) {
+		auto nextWidth = spriteColl[z].width;
+		auto nextHeight = spriteColl[z].height;
+
+		uint16_t expectedWidth = ceil(prevWidth / 2.0f);
+		uint16_t expectedHeight = ceil(prevHeight / 2.0f);
+
+		if (nextWidth != expectedWidth || nextHeight != expectedHeight) {
+			__debugbreak();
+		}
+
+		prevWidth = nextWidth;
+		prevHeight = nextHeight;
+	}
+
+
+	// Test
+
+	uint16_t lowestMipWidth = spriteColl[zoom_max].width;
+	uint16_t lowestMipHeight = spriteColl[zoom_max].height;
+
+	uint16_t maxMipWidth = lowestMipWidth;
+	uint16_t maxMipHeight = lowestMipHeight;
+
+	uint numMips = zoom_max - zoom_min;
+
+	maxMipWidth <<= numMips;
+	maxMipHeight <<= numMips;
+
+
+	//D3D12_RESOURCE_DESC dxDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R8_UINT, maxMipWidth, maxMipHeight);
+	//dxDesc.MipLevels = (numMips + 1);
+	//dxDesc.Alignment = D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT;
+
+	
+
 	// Calculate the size of the heap required
 	D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[ZOOM_LVL_END] = {};
 	D3D12_RESOURCE_DESC defaultDescs[ZOOM_LVL_END];
@@ -1145,6 +1186,22 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 
 	D3D12_RESOURCE_ALLOCATION_INFO1 defaultAllocInfos[ZOOM_LVL_END];
 	auto defaultHeapInfo = device->GetResourceAllocationInfo1(0, numTexturesNeeded, defaultDescs, defaultAllocInfos);
+
+	CD3DX12_RESOURCE_DESC oneTexDesc = CD3DX12_RESOURCE_DESC::Tex2D(defaultDescs[0].Format, maxMipWidth, maxMipHeight);
+	oneTexDesc.Alignment = D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT;
+	oneTexDesc.MipLevels = numMips + 1;
+
+	D3D12_RESOURCE_ALLOCATION_INFO dxSize = device->GetResourceAllocationInfo(0, 1, &oneTexDesc);
+
+	if (dxSize.Alignment != D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT) {
+		oneTexDesc.Alignment = 0;
+	}
+
+	dxSize = device->GetResourceAllocationInfo(0, 1, &oneTexDesc);
+
+	char sss[256];
+	sprintf_s(sss, "SSS,%u,%u\n", defaultHeapInfo.SizeInBytes, dxSize.SizeInBytes);
+	OutputDebugStringA(sss);
 
 	// Create a heap for the default resources
 	D3D12_HEAP_DESC heapDesc = {};
