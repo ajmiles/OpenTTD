@@ -17,14 +17,15 @@
 /** Maximum of 10 digits for MIN / MAX_INT32, 1 for the sign and 1 for '\0'. */
 static const int INT32_DIGITS_WITH_SIGN_AND_TERMINATION = 10 + 1 + 1;
 
-/** Bitmask of flags for Script settings. */
-enum ScriptConfigFlags {
-	SCRIPTCONFIG_NONE      = 0x0, ///< No flags set.
+/** Flags for Script settings. */
+enum class ScriptConfigFlag : uint8_t {
 	// Unused flag 0x1.
-	SCRIPTCONFIG_BOOLEAN   = 0x2, ///< This value is a boolean (either 0 (false) or 1 (true) ).
-	SCRIPTCONFIG_INGAME    = 0x4, ///< This setting can be changed while the Script is running.
-	SCRIPTCONFIG_DEVELOPER = 0x8, ///< This setting will only be visible when the Script development tools are active.
+	Boolean   = 1, ///< This value is a boolean (either 0 (false) or 1 (true) ).
+	InGame    = 2, ///< This setting can be changed while the Script is running.
+	Developer = 3, ///< This setting will only be visible when the Script development tools are active.
 };
+
+using ScriptConfigFlags = EnumBitSet<ScriptConfigFlag, uint8_t>;
 
 typedef std::map<int, std::string> LabelMapping; ///< Map-type used to map the setting numbers to labels.
 
@@ -35,11 +36,13 @@ struct ScriptConfigItem {
 	int min_value = 0;            ///< The minimal value this configuration setting can have.
 	int max_value = 1;            ///< The maximal value this configuration setting can have.
 	int default_value = 0;        ///< The default value of this configuration setting.
-	int random_deviation = 0;     ///< The maximum random deviation from the default value.
 	int step_size = 1;            ///< The step size in the gui.
-	ScriptConfigFlags flags = SCRIPTCONFIG_NONE; ///< Flags for the configuration setting.
+	ScriptConfigFlags flags{};    ///< Flags for the configuration setting.
 	LabelMapping labels;          ///< Text labels for the integer values.
 	bool complete_labels = false; ///< True if all values have a label.
+
+	std::string GetString(int value) const;
+	TextColour GetColour() const;
 };
 
 typedef std::vector<ScriptConfigItem> ScriptConfigItemList; ///< List of ScriptConfig items.
@@ -74,9 +77,8 @@ public:
 	 * @param version The version of the Script to load, or -1 of latest.
 	 * @param force_exact_match If true try to find the exact same version
 	 *   as specified. If false any compatible version is ok.
-	 * @param is_random Is the Script chosen randomly?
 	 */
-	void Change(std::optional<const std::string> name, int version = -1, bool force_exact_match = false);
+	void Change(std::optional<std::string> name, int version = -1, bool force_exact_match = false);
 
 	/**
 	 * Get the ScriptInfo linked to this ScriptConfig.
@@ -92,7 +94,7 @@ public:
 	 * Where to get the config from, either default (depends on current game
 	 * mode) or force either newgame or normal
 	 */
-	enum ScriptSettingSource {
+	enum ScriptSettingSource : uint8_t {
 		SSS_DEFAULT,       ///< Get the Script config from the current game mode
 		SSS_FORCE_NEWGAME, ///< Get the newgame Script config
 		SSS_FORCE_GAME,    ///< Get the Script config from the current game
@@ -131,11 +133,6 @@ public:
 	 * Reset only editable and visible settings to their default value.
 	 */
 	void ResetEditableSettings(bool yet_to_start);
-
-	/**
-	 * Randomize all settings the Script requested to be randomized.
-	 */
-	void AddRandomDeviation(CompanyID owner);
 
 	/**
 	 * Is this config attached to an Script? In other words, is there a Script

@@ -24,7 +24,7 @@ struct ContentInfo;
 /** Structure holding filename and MD5 information about a single file */
 struct MD5File {
 	/** The result of a checksum check */
-	enum ChecksumResult {
+	enum ChecksumResult : uint8_t {
 		CR_UNKNOWN,  ///< The file has not been checked yet
 		CR_MATCH,    ///< The file did exist and the md5 checksum did match
 		CR_MISMATCH, ///< The file did exist, just the md5 checksum did not match
@@ -130,11 +130,9 @@ struct BaseSet {
 	 */
 	std::string GetListLabel() const
 	{
-		if (this->GetNumInvalid() == 0) return this->name;
+		if (this->GetNumInvalid() == 0) return GetString(STR_JUST_RAW_STRING, this->name);
 
-		SetDParamStr(0, this->name);
-		SetDParam(1, this->GetNumInvalid());
-		return GetString(STR_BASESET_STATUS);
+		return GetString(STR_BASESET_STATUS, this->name, this->GetNumInvalid());
 	}
 
 	/**
@@ -158,8 +156,8 @@ struct BaseSet {
 	 */
 	std::optional<std::string> GetTextfile(TextfileType type) const
 	{
-		for (uint i = 0; i < NUM_FILES; i++) {
-			auto textfile = ::GetTextfile(type, BASESET_DIR, this->files[i].filename);
+		for (const auto &file : this->files) {
+			auto textfile = ::GetTextfile(type, BASESET_DIR, file.filename);
 			if (textfile.has_value()) {
 				return textfile;
 			}
@@ -238,7 +236,7 @@ template <class Tbase_set>
 const char *TryGetBaseSetFile(const ContentInfo *ci, bool md5sum, const Tbase_set *s);
 
 /** Types of graphics in the base graphics set */
-enum GraphicsFileType {
+enum GraphicsFileType : uint8_t {
 	GFT_BASE,     ///< Base sprites for all climates
 	GFT_LOGOS,    ///< Logos, landscape icons and original terrain generator sprites
 	GFT_ARCTIC,   ///< Landscape replacement sprites for arctic
@@ -249,7 +247,7 @@ enum GraphicsFileType {
 };
 
 /** Blitter type for base graphics sets. */
-enum BlitterType {
+enum BlitterType : uint8_t {
 	BLT_8BPP,       ///< Base set has 8 bpp sprites only.
 	BLT_32BPP,      ///< Base set has both 8 bpp and 32 bpp sprites.
 };
@@ -313,10 +311,10 @@ static const uint NUM_SONGS_AVAILABLE = 1 + NUM_SONG_CLASSES * NUM_SONGS_CLASS;
 static const uint NUM_SONGS_PLAYLIST  = 32;
 
 /* Functions to read DOS music CAT files, similar to but not quite the same as sound effect CAT files */
-char *GetMusicCatEntryName(const std::string &filename, size_t entrynum);
-byte *GetMusicCatEntryData(const std::string &filename, size_t entrynum, size_t &entrylen);
+std::optional<std::string> GetMusicCatEntryName(const std::string &filename, size_t entrynum);
+std::optional<std::vector<uint8_t>> GetMusicCatEntryData(const std::string &filename, size_t entrynum);
 
-enum MusicTrackType {
+enum MusicTrackType : uint8_t {
 	MTT_STANDARDMIDI, ///< Standard MIDI file
 	MTT_MPSMIDI,      ///< MPS GM driver MIDI format (contained in a CAT file)
 };
@@ -324,7 +322,7 @@ enum MusicTrackType {
 /** Metadata about a music track. */
 struct MusicSongInfo {
 	std::string songname;    ///< name of song displayed in UI
-	byte tracknr;            ///< track number of song displayed in UI
+	uint8_t tracknr;            ///< track number of song displayed in UI
 	std::string filename;    ///< file on disk containing song (when used in MusicSet class)
 	MusicTrackType filetype; ///< decoder required for song file
 	int cat_index;           ///< entry index in CAT file, for filetype==MTT_MPSMIDI
@@ -338,7 +336,7 @@ struct MusicSet : BaseSet<MusicSet, NUM_SONGS_AVAILABLE, false> {
 	/** Data about individual songs in set. */
 	MusicSongInfo songinfo[NUM_SONGS_AVAILABLE];
 	/** Number of valid songs in set. */
-	byte num_available;
+	uint8_t num_available;
 
 	bool FillSetDetails(const IniFile &ini, const std::string &path, const std::string &full_filename);
 };

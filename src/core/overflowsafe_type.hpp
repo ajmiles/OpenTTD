@@ -35,6 +35,8 @@ private:
 	/** The non-overflow safe backend to store the value in. */
 	T m_value;
 public:
+	using BaseType = T;
+
 	constexpr OverflowSafeInt() : m_value(0) { }
 
 	constexpr OverflowSafeInt(const OverflowSafeInt &other) : m_value(other.m_value) { }
@@ -140,7 +142,7 @@ public:
 	inline constexpr OverflowSafeInt operator * (const int    factor) const { OverflowSafeInt result = *this; result *= (int64_t)factor; return result; }
 	inline constexpr OverflowSafeInt operator * (const uint   factor) const { OverflowSafeInt result = *this; result *= (int64_t)factor; return result; }
 	inline constexpr OverflowSafeInt operator * (const uint16_t factor) const { OverflowSafeInt result = *this; result *= (int64_t)factor; return result; }
-	inline constexpr OverflowSafeInt operator * (const byte   factor) const { OverflowSafeInt result = *this; result *= (int64_t)factor; return result; }
+	inline constexpr OverflowSafeInt operator * (const uint8_t   factor) const { OverflowSafeInt result = *this; result *= (int64_t)factor; return result; }
 
 	/* Operators for division. */
 	inline constexpr OverflowSafeInt& operator /= (const int64_t            divisor)       { this->m_value /= divisor; return *this; }
@@ -160,24 +162,18 @@ public:
 
 	/* Operators for (in)equality when comparing overflow safe ints. */
 	inline constexpr bool operator == (const OverflowSafeInt& other) const { return this->m_value == other.m_value; }
-	inline constexpr bool operator != (const OverflowSafeInt& other) const { return !(*this == other); }
-	inline constexpr bool operator >  (const OverflowSafeInt& other) const { return this->m_value > other.m_value; }
-	inline constexpr bool operator >= (const OverflowSafeInt& other) const { return this->m_value >= other.m_value; }
-	inline constexpr bool operator <  (const OverflowSafeInt& other) const { return !(*this >= other); }
-	inline constexpr bool operator <= (const OverflowSafeInt& other) const { return !(*this > other); }
+	inline constexpr auto operator <=>(const OverflowSafeInt& other) const { return this->m_value <=> other.m_value; }
 
 	/* Operators for (in)equality when comparing non-overflow safe ints. */
 	inline constexpr bool operator == (const int other) const { return this->m_value == other; }
-	inline constexpr bool operator != (const int other) const { return !(*this == other); }
-	inline constexpr bool operator >  (const int other) const { return this->m_value > other; }
-	inline constexpr bool operator >= (const int other) const { return this->m_value >= other; }
-	inline constexpr bool operator <  (const int other) const { return !(*this >= other); }
-	inline constexpr bool operator <= (const int other) const { return !(*this > other); }
+	inline constexpr auto operator <=>(const int other) const { return this->m_value <=> other; }
 
 	inline constexpr operator T () const { return this->m_value; }
 
 	static inline constexpr OverflowSafeInt<T> max() { return T_MAX; }
 	static inline constexpr OverflowSafeInt<T> min() { return T_MIN; }
+
+	BaseType base() const noexcept { return this->m_value; }
 };
 
 
@@ -200,10 +196,10 @@ template <class T> inline constexpr OverflowSafeInt<T> operator * (const uint  a
 template <class T> inline constexpr OverflowSafeInt<T> operator / (const uint  a, const OverflowSafeInt<T> b) { return (OverflowSafeInt<T>)a / (int)b; }
 
 /* Sometimes we got byte operator OverflowSafeInt instead of vice versa. Handle that properly. */
-template <class T> inline constexpr OverflowSafeInt<T> operator + (const byte  a, const OverflowSafeInt<T> b) { return b + (uint)a; }
-template <class T> inline constexpr OverflowSafeInt<T> operator - (const byte  a, const OverflowSafeInt<T> b) { return -b + (uint)a; }
-template <class T> inline constexpr OverflowSafeInt<T> operator * (const byte  a, const OverflowSafeInt<T> b) { return b * (uint)a; }
-template <class T> inline constexpr OverflowSafeInt<T> operator / (const byte  a, const OverflowSafeInt<T> b) { return (OverflowSafeInt<T>)a / (int)b; }
+template <class T> inline constexpr OverflowSafeInt<T> operator + (const uint8_t  a, const OverflowSafeInt<T> b) { return b + (uint)a; }
+template <class T> inline constexpr OverflowSafeInt<T> operator - (const uint8_t  a, const OverflowSafeInt<T> b) { return -b + (uint)a; }
+template <class T> inline constexpr OverflowSafeInt<T> operator * (const uint8_t  a, const OverflowSafeInt<T> b) { return b * (uint)a; }
+template <class T> inline constexpr OverflowSafeInt<T> operator / (const uint8_t  a, const OverflowSafeInt<T> b) { return (OverflowSafeInt<T>)a / (int)b; }
 
 typedef OverflowSafeInt<int64_t> OverflowSafeInt64;
 typedef OverflowSafeInt<int32_t> OverflowSafeInt32;

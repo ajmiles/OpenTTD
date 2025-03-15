@@ -15,6 +15,7 @@
 #include "os_abstraction.h"
 #include "config.h"
 #include "core.h"
+#include "../../core/convertible_through_base.hpp"
 #include "../../string_type.h"
 
 typedef uint16_t PacketSize; ///< Size of the whole packet.
@@ -40,11 +41,13 @@ typedef uint8_t  PacketType; ///< Identifier for the packet
  *     (year % 4 == 0) and ((year % 100 != 0) or (year % 400 == 0))
  */
 struct Packet {
+	static constexpr size_t EncodedLengthOfPacketSize() { return sizeof(PacketSize); }
+	static constexpr size_t EncodedLengthOfPacketType() { return sizeof(PacketType); }
 private:
 	/** The current read/write position in the packet */
 	PacketSize pos;
 	/** The buffer of this packet. */
-	std::vector<byte> buffer;
+	std::vector<uint8_t> buffer;
 	/** The limit for the packet size. */
 	size_t limit;
 
@@ -52,8 +55,8 @@ private:
 	NetworkSocketHandler *cs;
 
 public:
-	Packet(NetworkSocketHandler *cs, size_t limit, size_t initial_read_size = sizeof(PacketSize));
-	Packet(PacketType type, size_t limit = COMPAT_MTU);
+	Packet(NetworkSocketHandler *cs, size_t limit, size_t initial_read_size = EncodedLengthOfPacketSize());
+	Packet(NetworkSocketHandler *cs, PacketType type, size_t limit = COMPAT_MTU);
 
 	/* Sending/writing of packets */
 	void PrepareToSend();
@@ -61,18 +64,19 @@ public:
 	bool   CanWriteToPacket(size_t bytes_to_write);
 	void   Send_bool  (bool   data);
 	void   Send_uint8 (uint8_t  data);
+	void   Send_uint8 (const ConvertibleThroughBase auto &data) { this->Send_uint8(data.base()); }
 	void   Send_uint16(uint16_t data);
 	void   Send_uint32(uint32_t data);
 	void   Send_uint64(uint64_t data);
 	void   Send_string(const std::string_view data);
-	void   Send_buffer(const std::vector<byte> &data);
-	size_t Send_bytes (const byte *begin, const byte *end);
+	void   Send_buffer(const std::vector<uint8_t> &data);
+	std::span<const uint8_t> Send_bytes(const std::span<const uint8_t> span);
 
 	/* Reading/receiving of packets */
 	bool HasPacketSizeData() const;
 	bool ParsePacketSize();
 	size_t Size() const;
-	void PrepareToRead();
+	[[nodiscard]] bool PrepareToRead();
 	PacketType GetPacketType() const;
 
 	bool   CanReadFromPacket(size_t bytes_to_read, bool close_connection = false);
@@ -81,7 +85,8 @@ public:
 	uint16_t Recv_uint16();
 	uint32_t Recv_uint32();
 	uint64_t Recv_uint64();
-	std::vector<byte> Recv_buffer();
+	std::vector<uint8_t> Recv_buffer();
+	size_t Recv_bytes(std::span<uint8_t> span);
 	std::string Recv_string(size_t length, StringValidationSettings settings = SVS_REPLACE_WITH_QUESTION_MARK);
 
 	size_t RemainingBytesToTransfer() const;

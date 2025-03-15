@@ -19,7 +19,7 @@
 
 
 /** The different types of road tiles. */
-enum RoadTileType {
+enum RoadTileType : uint8_t {
 	ROAD_TILE_NORMAL,   ///< Normal road
 	ROAD_TILE_CROSSING, ///< Level crossing
 	ROAD_TILE_DEPOT,    ///< Depot (one entrance)
@@ -251,9 +251,9 @@ inline Owner GetRoadOwner(Tile t, RoadTramType rtt)
 inline void SetRoadOwner(Tile t, RoadTramType rtt, Owner o)
 {
 	if (rtt == RTT_ROAD) {
-		SB(IsNormalRoadTile(t) ? t.m1() : t.m7(), 0, 5, o);
+		SB(IsNormalRoadTile(t) ? t.m1() : t.m7(), 0, 5, o.base());
 	} else {
-		SB(t.m3(), 4, 4, o == OWNER_NONE ? OWNER_TOWN : o);
+		SB(t.m3(), 4, 4, (o == OWNER_NONE ? OWNER_TOWN : o).base());
 	}
 }
 
@@ -393,7 +393,7 @@ inline bool HasCrossingReservation(Tile t)
 inline void SetCrossingReservation(Tile t, bool b)
 {
 	assert(IsLevelCrossingTile(t));
-	SB(t.m5(), 4, 1, b ? 1 : 0);
+	AssignBit(t.m5(), 4, b);
 }
 
 /**
@@ -428,7 +428,7 @@ inline bool IsCrossingBarred(Tile t)
 inline void SetCrossingBarred(Tile t, bool barred)
 {
 	assert(IsLevelCrossing(t));
-	SB(t.m5(), 5, 1, barred ? 1 : 0);
+	AssignBit(t.m5(), 5, barred);
 }
 
 /**
@@ -474,7 +474,7 @@ inline void ToggleSnow(Tile t)
 
 
 /** The possible road side decorations. */
-enum Roadside {
+enum Roadside : uint8_t {
 	ROADSIDE_BARREN           = 0, ///< Road on barren land
 	ROADSIDE_GRASS            = 1, ///< Road on grass
 	ROADSIDE_PAVED            = 2, ///< Road with paved sidewalks
@@ -636,7 +636,7 @@ inline void MakeRoadNormal(Tile t, RoadBits bits, RoadType road_rt, RoadType tra
 {
 	SetTileType(t, MP_ROAD);
 	SetTileOwner(t, road);
-	t.m2() = town;
+	t.m2() = town.base();
 	t.m3() = (tram_rt != INVALID_ROADTYPE ? bits : 0);
 	t.m5() = (road_rt != INVALID_ROADTYPE ? bits : 0) | ROAD_TILE_NORMAL << 6;
 	SB(t.m6(), 2, 4, 0);
@@ -657,16 +657,16 @@ inline void MakeRoadNormal(Tile t, RoadBits bits, RoadType road_rt, RoadType tra
  * @param tram_rt The tram roadtype to set for the tile.
  * @param town    Town ID if the road is a town-owned road.
  */
-inline void MakeRoadCrossing(Tile t, Owner road, Owner tram, Owner rail, Axis roaddir, RailType rat, RoadType road_rt, RoadType tram_rt, uint town)
+inline void MakeRoadCrossing(Tile t, Owner road, Owner tram, Owner rail, Axis roaddir, RailType rat, RoadType road_rt, RoadType tram_rt, TownID town)
 {
 	SetTileType(t, MP_ROAD);
 	SetTileOwner(t, rail);
-	t.m2() = town;
+	t.m2() = town.base();
 	t.m3() = 0;
 	t.m4() = INVALID_ROADTYPE;
 	t.m5() = ROAD_TILE_CROSSING << 6 | roaddir;
 	SB(t.m6(), 2, 4, 0);
-	t.m7() = road;
+	t.m7() = road.base();
 	t.m8() = INVALID_ROADTYPE << 6 | rat;
 	SetRoadTypes(t, road_rt, tram_rt);
 	SetRoadOwner(t, RTT_TRAM, tram);
@@ -695,12 +695,12 @@ inline void MakeRoadDepot(Tile tile, Owner owner, DepotID depot_id, DiagDirectio
 {
 	SetTileType(tile, MP_ROAD);
 	SetTileOwner(tile, owner);
-	tile.m2() = depot_id;
+	tile.m2() = depot_id.base();
 	tile.m3() = 0;
 	tile.m4() = INVALID_ROADTYPE;
 	tile.m5() = ROAD_TILE_DEPOT << 6 | dir;
 	SB(tile.m6(), 2, 4, 0);
-	tile.m7() = owner;
+	tile.m7() = owner.base();
 	tile.m8() = INVALID_ROADTYPE << 6;
 	SetRoadType(tile, GetRoadTramType(rt), rt);
 	SetRoadOwner(tile, RTT_TRAM, owner);

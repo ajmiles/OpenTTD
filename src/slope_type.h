@@ -19,7 +19,7 @@
 /**
  * Enumeration of tile corners
  */
-enum Corner {
+enum Corner : uint8_t {
 	CORNER_W = 0,
 	CORNER_S = 1,
 	CORNER_E = 2,
@@ -45,7 +45,7 @@ enum Corner {
  * slopes would mean that it is not a steep slope as halftile
  * slopes only span one height level.
  */
-enum Slope : byte {
+enum Slope : uint8_t {
 	SLOPE_FLAT     = 0x00,                                  ///< a flat tile
 	SLOPE_W        = 0x01,                                  ///< the west corner of the tile is raised
 	SLOPE_S        = 0x02,                                  ///< the south corner of the tile is raised
@@ -90,7 +90,7 @@ static const uint32_t VALID_LEVEL_CROSSING_SLOPES = M(SLOPE_SEN) | M(SLOPE_ENW) 
 /**
  * Enumeration for Foundations.
  */
-enum Foundation {
+enum Foundation : uint8_t {
 	FOUNDATION_NONE,             ///< The tile has no foundation, the slope remains unchanged.
 	FOUNDATION_LEVELED,          ///< The tile is leveled up to a flat slope.
 	FOUNDATION_INCLINED_X,       ///< The tile has an along X-axis inclined foundation.

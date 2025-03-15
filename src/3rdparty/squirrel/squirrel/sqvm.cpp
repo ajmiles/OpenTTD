@@ -51,7 +51,7 @@ bool SQVM::BW_OP(SQUnsignedInteger op,SQObjectPtr &trg,const SQObjectPtr &o1,con
 			case BW_XOR:	res = i1 ^ i2; break;
 			case BW_SHIFTL:	res = i1 << i2; break;
 			case BW_SHIFTR:	res = i1 >> i2; break;
-			case BW_USHIFTR:res = (SQInteger)(*((SQUnsignedInteger*)&i1) >> i2); break;
+			case BW_USHIFTR:res = (SQInteger)(std::bit_cast<SQUnsignedInteger>(i1) >> i2); break;
 			default: { Raise_Error("internal vm error bitwise op failed"); return false; }
 		}
 	}
@@ -472,10 +472,10 @@ bool SQVM::DerefInc(SQInteger op,SQObjectPtr &target, SQObjectPtr &self, SQObjec
 
 #define arg0 (_i_._arg0)
 #define arg1 (_i_._arg1)
-#define sarg1 (*(const_cast<SQInt32 *>(&_i_._arg1)))
+#define sarg1 (std::bit_cast<SQInt32>(_i_._arg1))
 #define arg2 (_i_._arg2)
 #define arg3 (_i_._arg3)
-#define sarg3 ((SQInteger)*((const signed char *)&_i_._arg3))
+#define sarg3 ((SQInteger)std::bit_cast<char>(_i_._arg3))
 
 SQRESULT SQVM::Suspend()
 {
@@ -764,7 +764,7 @@ exception_restore:
 				continue;
 			case _OP_LOAD: TARGET = ci->_literals[arg1]; continue;
 			case _OP_LOADINT: TARGET = (SQInteger)arg1; continue;
-			case _OP_LOADFLOAT: TARGET = *((const SQFloat *)&arg1); continue;
+			case _OP_LOADFLOAT: TARGET = std::bit_cast<SQFloat>(arg1); continue;
 			case _OP_DLOAD: TARGET = ci->_literals[arg1]; STK(arg2) = ci->_literals[arg3];continue;
 			case _OP_TAILCALL:
 				temp_reg = STK(arg1);
@@ -1480,7 +1480,6 @@ bool SQVM::DeleteSlot(const SQObjectPtr &self,const SQObjectPtr &key,SQObjectPtr
 
 bool SQVM::Call(SQObjectPtr &closure,SQInteger nparams,SQInteger stackbase,SQObjectPtr &outres,SQBool raiseerror,SQBool can_suspend)
 {
-	[[maybe_unused]] SQInteger prevstackbase = _stackbase;
 	switch(type(closure)) {
 	case OT_CLOSURE: {
 		assert(!can_suspend || this->_can_suspend);
@@ -1490,13 +1489,12 @@ bool SQVM::Call(SQObjectPtr &closure,SQInteger nparams,SQInteger stackbase,SQObj
 		this->_can_suspend = backup_suspend;
 		return ret;
 	}
-		break;
+
 	case OT_NATIVECLOSURE: {
 		bool suspend;
 		return CallNative(_nativeclosure(closure), nparams, stackbase, outres,suspend);
-
 	}
-		break;
+
 	case OT_CLASS: {
 		SQObjectPtr constr;
 		SQObjectPtr temp;
@@ -1507,14 +1505,10 @@ bool SQVM::Call(SQObjectPtr &closure,SQInteger nparams,SQInteger stackbase,SQObj
 		}
 		return true;
 	}
-		break;
+
 	default:
 		return false;
 	}
-	if(!_suspended) {
-		assert(_stackbase == prevstackbase);
-	}
-	return true;
 }
 
 bool SQVM::CallMetaMethod(SQDelegable *del,SQMetaMethod mm,SQInteger nparams,SQObjectPtr &outres)

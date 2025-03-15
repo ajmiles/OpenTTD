@@ -71,7 +71,7 @@ int RecursiveCommandCounter::_counter = 0;
  * Define a command with the flags which belongs to it.
  *
  * This struct connects a command handler function with the flags created with
- * the #CMD_AUTO, #CMD_OFFLINE and #CMD_SERVER values.
+ * the #CommandFlag::Auto, #CommandFlag::Offline and #CommandFlag::Server values.
  */
 struct CommandInfo {
 	const char *name;   ///< A human readable name for the procedure
@@ -82,7 +82,7 @@ struct CommandInfo {
 template <typename T>
 inline constexpr CommandInfo CommandFromTrait() noexcept { return { T::name, T::flags, T::type }; };
 
-template<typename T, T... i>
+template <typename T, T... i>
 inline constexpr auto MakeCommandsFromTraits(std::integer_sequence<T, i...>) noexcept {
 	return std::array<CommandInfo, sizeof...(i)>{{ CommandFromTrait<CommandTraits<static_cast<Commands>(i)>>()... }};
 }
@@ -151,7 +151,7 @@ bool IsCommandAllowedWhilePaused(Commands cmd)
 		CMDPL_NO_CONSTRUCTION, ///< CMDT_VEHICLE_MANAGEMENT
 		CMDPL_NO_CONSTRUCTION, ///< CMDT_ROUTE_MANAGEMENT
 		CMDPL_NO_CONSTRUCTION, ///< CMDT_OTHER_MANAGEMENT
-		CMDPL_NO_CONSTRUCTION, ///< CMDT_COMPANY_SETTING
+		CMDPL_NO_ACTIONS,      ///< CMDT_COMPANY_SETTING
 		CMDPL_NO_ACTIONS,      ///< CMDT_SERVER_SETTING
 		CMDPL_NO_ACTIONS,      ///< CMDT_CHEAT
 	};
@@ -179,17 +179,17 @@ void CommandHelperBase::InternalDoBefore(bool top_level, bool test)
  * @param top_level Top level of command execution, i.e. command from a command.
  * @param test Test run of command?
  */
-void CommandHelperBase::InternalDoAfter(CommandCost &res, DoCommandFlag flags, bool top_level, bool test)
+void CommandHelperBase::InternalDoAfter(CommandCost &res, DoCommandFlags flags, bool top_level, bool test)
 {
 	if (test) {
 		SetTownRatingTestMode(false);
 
-		if (res.Succeeded() && top_level && !(flags & DC_QUERY_COST) && !(flags & DC_BANKRUPT)) {
+		if (res.Succeeded() && top_level && !flags.Test(DoCommandFlag::QueryCost) && !flags.Test(DoCommandFlag::Bankrupt)) {
 			CheckCompanyHasMoney(res); // CheckCompanyHasMoney() modifies 'res' to an error if it fails.
 		}
 	} else {
 		/* If top-level, subtract the money. */
-		if (res.Succeeded() && top_level && !(flags & DC_BANKRUPT)) {
+		if (res.Succeeded() && top_level && !flags.Test(DoCommandFlag::Bankrupt)) {
 			SubtractMoneyFromCompany(res);
 		}
 	}
@@ -211,14 +211,15 @@ std::tuple<bool, bool, bool> CommandHelperBase::InternalPostBefore(Commands cmd,
 	 * However, in case of incoming network commands,
 	 * map generation or the pause button we do want
 	 * to execute. */
-	bool estimate_only = _shift_pressed && IsLocalCompany() && !_generating_world && !network_command && !(flags & CMD_NO_EST);
+	bool estimate_only = _shift_pressed && IsLocalCompany() && !_generating_world && !network_command && !flags.Test(CommandFlag::NoEst);
 
 	/* We're only sending the command, so don't do
 	 * fancy things for 'success'. */
 	bool only_sending = _networking && !network_command;
 
-	if (_pause_mode != PM_UNPAUSED && !IsCommandAllowedWhilePaused(cmd) && !estimate_only) {
-		ShowErrorMessage(err_message, STR_ERROR_NOT_ALLOWED_WHILE_PAUSED, WL_INFO, TileX(tile) * TILE_SIZE, TileY(tile) * TILE_SIZE);
+	if (_pause_mode.Any() && !IsCommandAllowedWhilePaused(cmd) && !estimate_only) {
+		ShowErrorMessage(GetEncodedString(err_message), GetEncodedString(STR_ERROR_NOT_ALLOWED_WHILE_PAUSED),
+			WL_INFO, TileX(tile) * TILE_SIZE, TileY(tile) * TILE_SIZE);
 		return { true, estimate_only, only_sending };
 	} else {
 		return { false, estimate_only, only_sending };
@@ -242,7 +243,7 @@ void CommandHelperBase::InternalPostResult(const CommandCost &res, TileIndex til
 	if (res.Failed()) {
 		/* Only show the error when it's for us. */
 		if (estimate_only || (IsLocalCompany() && err_message != 0 && my_cmd)) {
-			ShowErrorMessage(err_message, x, y, res);
+			ShowErrorMessage(GetEncodedString(err_message), x, y, res);
 		}
 	} else if (estimate_only) {
 		ShowEstimatedCostOrIncome(res.GetCost(), x, y);
@@ -259,7 +260,7 @@ void CommandHelperBase::InternalPostResult(const CommandCost &res, TileIndex til
 /** Helper to make a desync log for a command. */
 void CommandHelperBase::LogCommandExecution(Commands cmd, StringID err_message, const CommandDataBuffer &args, bool failed)
 {
-	Debug(desync, 1, "{}: {:08x}; {:02x}; {:02x}; {:08x}; {:08x}; {} ({})", failed ? "cmdf" : "cmd", (uint32_t)TimerGameEconomy::date.base(), TimerGameEconomy::date_fract, (int)_current_company, cmd, err_message, FormatArrayAsHex(args), GetCommandName(cmd));
+	Debug(desync, 1, "{}: {:08x}; {:02x}; {:02x}; {:08x}; {:08x}; {} ({})", failed ? "cmdf" : "cmd", (uint32_t)TimerGameEconomy::date.base(), TimerGameEconomy::date_fract, _current_company, cmd, err_message, FormatArrayAsHex(args), GetCommandName(cmd));
 }
 
 /**
@@ -271,12 +272,12 @@ void CommandHelperBase::LogCommandExecution(Commands cmd, StringID err_message, 
 bool CommandHelperBase::InternalExecutePrepTest(CommandFlags cmd_flags, TileIndex, Backup<CompanyID> &cur_company)
 {
 	/* Always execute server and spectator commands as spectator */
-	bool exec_as_spectator = (cmd_flags & (CMD_SPECTATOR | CMD_SERVER)) != 0;
+	bool exec_as_spectator = cmd_flags.Any({CommandFlag::Spectator, CommandFlag::Server});
 
 	/* If the company isn't valid it may only do server command or start a new company!
 	 * The server will ditch any server commands a client sends to it, so effectively
 	 * this guards the server from executing functions for an invalid company. */
-	if (_game_mode == GM_NORMAL && !exec_as_spectator && !Company::IsValidID(_current_company) && !(_current_company == OWNER_DEITY && (cmd_flags & CMD_DEITY) != 0)) {
+	if (_game_mode == GM_NORMAL && !exec_as_spectator && !Company::IsValidID(_current_company) && !(_current_company == OWNER_DEITY && cmd_flags.Test(CommandFlag::Deity))) {
 		return false;
 	}
 
@@ -304,14 +305,14 @@ std::tuple<bool, bool, bool> CommandHelperBase::InternalExecuteValidateTestAndPr
 	SetTownRatingTestMode(false);
 
 	/* Make sure we're not messing things up here. */
-	assert((cmd_flags & (CMD_SPECTATOR | CMD_SERVER)) != 0 ? _current_company == COMPANY_SPECTATOR : cur_company.Verify());
+	assert(cmd_flags.Any({CommandFlag::Spectator, CommandFlag::Server}) ? _current_company == COMPANY_SPECTATOR : cur_company.Verify());
 
 	/* If the command fails, we're doing an estimate
 	 * or the player does not have enough money
 	 * (unless it's a command where the test and
 	 * execution phase might return different costs)
 	 * we bail out here. */
-	bool test_and_exec_can_differ = (cmd_flags & CMD_NO_TEST) != 0;
+	bool test_and_exec_can_differ = cmd_flags.Test(CommandFlag::NoTest);
 	if (res.Failed() || estimate_only || (!test_and_exec_can_differ && !CheckCompanyHasMoney(res))) {
 		return { true, !_networking || _generating_world || network_command, false };
 	}
@@ -350,7 +351,7 @@ CommandCost CommandHelperBase::InternalExecuteProcessResult(Commands cmd, Comman
 		_current_company = _local_company;
 	} else {
 		/* Make sure nothing bad happened, like changing the current company. */
-		assert((cmd_flags & (CMD_SPECTATOR | CMD_SERVER)) != 0 ? _current_company == COMPANY_SPECTATOR : cur_company.Verify());
+		assert(cmd_flags.Any({CommandFlag::Spectator, CommandFlag::Server}) ? _current_company == COMPANY_SPECTATOR : cur_company.Verify());
 		cur_company.Restore();
 	}
 
@@ -358,7 +359,7 @@ CommandCost CommandHelperBase::InternalExecuteProcessResult(Commands cmd, Comman
 	 * return of the command. Otherwise we can check whether the
 	 * test and execution have yielded the same result,
 	 * i.e. cost and error state are the same. */
-	bool test_and_exec_can_differ = (cmd_flags & CMD_NO_TEST) != 0;
+	bool test_and_exec_can_differ = cmd_flags.Test(CommandFlag::NoTest);
 	if (!test_and_exec_can_differ) {
 		assert(res_test.GetCost() == res_exec.GetCost() && res_test.Failed() == res_exec.Failed()); // sanity check
 	} else if (res_exec.Failed()) {
@@ -371,8 +372,7 @@ CommandCost CommandHelperBase::InternalExecuteProcessResult(Commands cmd, Comman
 		/* It could happen we removed rail, thus gained money, and deleted something else.
 		 * So make sure the signal buffer is empty even in this case */
 		UpdateSignalsInBuffer();
-		SetDParam(0, extra_cash);
-		return CommandCost(STR_ERROR_NOT_ENOUGH_CASH_REQUIRES_CURRENCY);
+		return CommandCostWithParam(STR_ERROR_NOT_ENOUGH_CASH_REQUIRES_CURRENCY, extra_cash);
 	}
 
 	/* update last build coordinate of company. */
@@ -384,7 +384,7 @@ CommandCost CommandHelperBase::InternalExecuteProcessResult(Commands cmd, Comman
 	SubtractMoneyFromCompany(res_exec);
 
 	/* Record if there was a command issues during pause; ignore pause/other setting related changes. */
-	if (_pause_mode != PM_UNPAUSED && _command_proc_table[cmd].type != CMDT_SERVER_SETTING) _pause_mode |= PM_COMMAND_DURING_PAUSE;
+	if (_pause_mode.Any() && _command_proc_table[cmd].type != CMDT_SERVER_SETTING) _pause_mode.Set(PauseMode::CommandDuringPause);
 
 	/* update signals if needed */
 	UpdateSignalsInBuffer();
@@ -407,26 +407,19 @@ void CommandCost::AddCost(const CommandCost &ret)
 	}
 }
 
-/**
- * Values to put on the #TextRefStack for the error message.
- * There is only one static instance of the array, just like there is only one
- * instance of normal DParams.
- */
-uint32_t CommandCost::textref_stack[16];
+/* static */ EncodedString CommandCost::encoded_message;
 
 /**
- * Activate usage of the NewGRF #TextRefStack for the error message.
- * @param grffile NewGRF that provides the #TextRefStack
- * @param num_registers number of entries to copy from the temporary NewGRF registers
+ * Return an error status, with string and parameter.
+ * @param str StringID of error.
+ * @param value Single parameter for error.
+ * @returns CommandCost representing the error.
  */
-void CommandCost::UseTextRefStack(const GRFFile *grffile, uint num_registers)
+CommandCost CommandCostWithParam(StringID str, uint64_t value)
 {
-	extern TemporaryStorageArray<int32_t, 0x110> _temp_store;
-
-	assert(num_registers < lengthof(textref_stack));
-	this->textref_stack_grffile = grffile;
-	this->textref_stack_size = num_registers;
-	for (uint i = 0; i < num_registers; i++) {
-		textref_stack[i] = _temp_store.GetValue(0x100 + i);
+	CommandCost error = CommandCost(str);
+	if (IsLocalCompany()) {
+		error.SetEncodedMessage(GetEncodedString(str, value));
 	}
+	return error;
 }

@@ -13,6 +13,8 @@
 #include "airport.h"
 #include "station_map.h"
 #include "newgrf_animation_type.h"
+#include "newgrf_badge_type.h"
+#include "newgrf_callbacks.h"
 #include "newgrf_commons.h"
 #include "newgrf_spritegroup.h"
 #include "station_base.h"
@@ -20,7 +22,7 @@
 /** Scope resolver for handling the tiles of an airport. */
 struct AirportTileScopeResolver : public ScopeResolver {
 	struct Station *st;  ///< %Station of the airport for which the callback is run, or \c nullptr for build gui.
-	byte airport_id;     ///< Type of airport for which the callback is run.
+	uint8_t airport_id;     ///< Type of airport for which the callback is run.
 	TileIndex tile;      ///< Tile for the callback, only valid for airporttile callbacks.
 	const AirportTileSpec *ats;
 
@@ -38,7 +40,7 @@ struct AirportTileScopeResolver : public ScopeResolver {
 	}
 
 	uint32_t GetRandomBits() const override;
-	uint32_t GetVariable(byte variable, [[maybe_unused]] uint32_t parameter, bool *available) const override;
+	uint32_t GetVariable(uint8_t variable, [[maybe_unused]] uint32_t parameter, bool &available) const override;
 };
 
 /** Resolver for tiles of an airport. */
@@ -49,7 +51,7 @@ struct AirportTileResolverObject : public ResolverObject {
 	AirportTileResolverObject(const AirportTileSpec *ats, TileIndex tile, Station *st,
 			CallbackID callback = CBID_NO_CALLBACK, uint32_t callback_param1 = 0, uint32_t callback_param2 = 0);
 
-	ScopeResolver *GetScope(VarSpriteGroupScope scope = VSG_SCOPE_SELF, byte relative = 0) override
+	ScopeResolver *GetScope(VarSpriteGroupScope scope = VSG_SCOPE_SELF, uint8_t relative = 0) override
 	{
 		switch (scope) {
 			case VSG_SCOPE_SELF: return &tiles_scope;
@@ -68,10 +70,11 @@ struct AirportTileResolverObject : public ResolverObject {
 struct AirportTileSpec {
 	AnimationInfo animation;              ///< Information about the animation.
 	StringID name;                        ///< Tile Subname string, land information on this tile will give you "AirportName (TileSubname)"
-	uint8_t callback_mask;                  ///< Bitmask telling which grf callback is set
+	AirportTileCallbackMasks callback_mask;                  ///< Bitmask telling which grf callback is set
 	uint8_t animation_special_flags;        ///< Extra flags to influence the animation
 	bool enabled;                         ///< entity still available (by default true). newgrf can disable it, though
 	GRFFileProps grf_prop;                ///< properties related the the grf file
+	std::vector<BadgeID> badges;
 
 	static const AirportTileSpec *Get(StationGfx gfx);
 	static const AirportTileSpec *GetByTile(TileIndex tile);
@@ -85,8 +88,8 @@ private:
 };
 
 void AnimateAirportTile(TileIndex tile);
-void AirportTileAnimationTrigger(Station *st, TileIndex tile, AirpAnimationTrigger trigger, CargoID cargo_type = INVALID_CARGO);
-void AirportAnimationTrigger(Station *st, AirpAnimationTrigger trigger, CargoID cargo_type = INVALID_CARGO);
+void AirportTileAnimationTrigger(Station *st, TileIndex tile, AirpAnimationTrigger trigger, CargoType cargo_type = INVALID_CARGO);
+void AirportAnimationTrigger(Station *st, AirpAnimationTrigger trigger, CargoType cargo_type = INVALID_CARGO);
 bool DrawNewAirportTile(TileInfo *ti, Station *st, const AirportTileSpec *airts);
 
 #endif /* NEWGRF_AIRPORTTILES_H */

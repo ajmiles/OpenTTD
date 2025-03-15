@@ -11,21 +11,15 @@
 #define NETWORK_TYPE_H
 
 #include "../core/enum_type.hpp"
+#include "../core/pool_type.hpp"
 
 /** How many clients can we have */
 static const uint MAX_CLIENTS = 255;
 
 /**
- * The number of slots; must be at least 1 more than MAX_CLIENTS. It must
- * furthermore be less than or equal to 256 as client indices (sent over
- * the network) are 8 bits. It needs 1 more for the dedicated server.
- */
-static const uint MAX_CLIENT_SLOTS = 256;
-
-/**
  * Vehicletypes in the order they are send in info packets.
  */
-enum NetworkVehicleType {
+enum NetworkVehicleType : uint8_t {
 	NETWORK_VEH_TRAIN = 0,
 	NETWORK_VEH_LORRY,
 	NETWORK_VEH_BUS,
@@ -52,16 +46,11 @@ enum ClientID : uint32_t {
 	CLIENT_ID_FIRST   = 2, ///< The first client ID
 };
 
-/** Indices into the client tables */
-typedef uint8_t ClientIndex;
+/** Indices into the client related pools */
+using ClientPoolID = PoolID<uint16_t, struct ClientPoolIDTag, MAX_CLIENTS + 1 /* dedicated server. */, 0xFFFF>;
 
 /** Indices into the admin tables. */
-typedef uint8_t AdminIndex;
-
-/** Maximum number of allowed admins. */
-static const AdminIndex MAX_ADMINS = 16;
-/** An invalid admin marker. */
-static const AdminIndex INVALID_ADMIN_ID = UINT8_MAX;
+using AdminID = PoolID<uint8_t, struct AdminIDTag, 16, 0xFF>;
 
 /** Simple calculated statistics of a company */
 struct NetworkCompanyStats {
@@ -70,25 +59,13 @@ struct NetworkCompanyStats {
 	bool ai;                                        ///< Is this company an AI
 };
 
-/** Some state information of a company, especially for servers */
-struct NetworkCompanyState {
-	std::string password; ///< The password for the company
-	uint16_t months_empty;  ///< How many months the company is empty
-};
-
 struct NetworkClientInfo;
-
-/** The type of password we're asking for. */
-enum NetworkPasswordType {
-	NETWORK_GAME_PASSWORD,    ///< The password of the game.
-	NETWORK_COMPANY_PASSWORD, ///< The password of the company.
-};
 
 /**
  * Destination of our chat messages.
  * @warning The values of the enum items are part of the admin network API. Only append at the end.
  */
-enum DestType : byte {
+enum DestType : uint8_t {
 	DESTTYPE_BROADCAST, ///< Send message/notice to all clients (All)
 	DESTTYPE_TEAM,      ///< Send message/notice to everyone playing the same company (Team)
 	DESTTYPE_CLIENT,    ///< Send message/notice to only a certain client (Private)
@@ -99,7 +76,7 @@ DECLARE_ENUM_AS_ADDABLE(DestType)
  * Actions that can be used for NetworkTextMessage.
  * @warning The values of the enum items are part of the admin network API. Only append at the end.
  */
-enum NetworkAction {
+enum NetworkAction : uint8_t {
 	NETWORK_ACTION_JOIN,
 	NETWORK_ACTION_LEAVE,
 	NETWORK_ACTION_SERVER_MESSAGE,
@@ -119,7 +96,7 @@ enum NetworkAction {
  * The error codes we send around in the protocols.
  * @warning The values of the enum items are part of the admin network API. Only append at the end.
  */
-enum NetworkErrorCode {
+enum NetworkErrorCode : uint8_t {
 	NETWORK_ERROR_GENERAL, // Try to use this one like never
 
 	/* Signals from clients */
@@ -145,8 +122,23 @@ enum NetworkErrorCode {
 	NETWORK_ERROR_TIMEOUT_MAP,
 	NETWORK_ERROR_TIMEOUT_JOIN,
 	NETWORK_ERROR_INVALID_CLIENT_NAME,
+	NETWORK_ERROR_NOT_ON_ALLOW_LIST,
+	NETWORK_ERROR_NO_AUTHENTICATION_METHOD_AVAILABLE,
 
 	NETWORK_ERROR_END,
+};
+
+/**
+ * Simple helper to (more easily) manage authorized keys.
+ *
+ * The authorized keys are hexadecimal representations of their binary form.
+ * The authorized keys are case insensitive.
+ */
+class NetworkAuthorizedKeys : public std::vector<std::string> {
+public:
+	bool Contains(std::string_view key) const;
+	bool Add(std::string_view key);
+	bool Remove(std::string_view key);
 };
 
 #endif /* NETWORK_TYPE_H */

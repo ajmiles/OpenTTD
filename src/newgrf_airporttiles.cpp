@@ -10,6 +10,7 @@
 #include "stdafx.h"
 #include "debug.h"
 #include "newgrf_airporttiles.h"
+#include "newgrf_badge.h"
 #include "newgrf_spritegroup.h"
 #include "newgrf_sound.h"
 #include "station_base.h"
@@ -38,7 +39,7 @@ AirportTileOverrideManager _airporttile_mngr(NEW_AIRPORTTILE_OFFSET, NUM_AIRPORT
 {
 	/* should be assert(gfx < lengthof(tiles)), but that gives compiler warnings
 	 * since it's always true if the following holds: */
-	static_assert(MAX_UVALUE(StationGfx) + 1 == lengthof(tiles));
+	static_assert(std::numeric_limits<StationGfx>::max() + 1 == lengthof(tiles));
 	return &AirportTileSpec::tiles[gfx];
 }
 
@@ -66,7 +67,7 @@ void AirportTileSpec::ResetAirportTiles()
 
 void AirportTileOverrideManager::SetEntitySpec(const AirportTileSpec *airpts)
 {
-	StationGfx airpt_id = this->AddEntityID(airpts->grf_prop.local_id, airpts->grf_prop.grffile->grfid, airpts->grf_prop.subst_id);
+	StationGfx airpt_id = this->AddEntityID(airpts->grf_prop.local_id, airpts->grf_prop.grfid, airpts->grf_prop.subst_id);
 
 	if (airpt_id == this->invalid_id) {
 		GrfMsg(1, "AirportTile.SetEntitySpec: Too many airport tiles allocated. Ignoring.");
@@ -79,7 +80,7 @@ void AirportTileOverrideManager::SetEntitySpec(const AirportTileSpec *airpts)
 	for (int i = 0; i < this->max_offset; i++) {
 		AirportTileSpec *overridden_airpts = &AirportTileSpec::tiles[i];
 
-		if (this->entity_overrides[i] != airpts->grf_prop.local_id || this->grfid_overrides[i] != airpts->grf_prop.grffile->grfid) continue;
+		if (this->entity_overrides[i] != airpts->grf_prop.local_id || this->grfid_overrides[i] != airpts->grf_prop.grfid) continue;
 
 		overridden_airpts->grf_prop.override = airpt_id;
 		overridden_airpts->enabled = false;
@@ -107,7 +108,7 @@ StationGfx GetTranslatedAirportTileID(StationGfx gfx)
  * @param grf_version8 True, if we are dealing with a new NewGRF which uses GRF version >= 8.
  * @return a construction of bits obeying the newgrf format
  */
-static uint32_t GetNearbyAirportTileInformation(byte parameter, TileIndex tile, StationID index, bool grf_version8)
+static uint32_t GetNearbyAirportTileInformation(uint8_t parameter, TileIndex tile, StationID index, bool grf_version8)
 {
 	if (parameter != 0) tile = GetNearbyTile(parameter, tile); // only perform if it is required
 	bool is_same_airport = (IsTileType(tile, MP_STATION) && IsAirport(tile) && GetStationIndex(tile) == index);
@@ -141,15 +142,15 @@ static uint32_t GetAirportTileIDAtOffset(TileIndex tile, const Station *st, uint
 		/* Overridden */
 		const AirportTileSpec *tile_ovr = AirportTileSpec::Get(ats->grf_prop.override);
 
-		if (tile_ovr->grf_prop.grffile->grfid == cur_grfid) {
+		if (tile_ovr->grf_prop.grfid == cur_grfid) {
 			return tile_ovr->grf_prop.local_id; // same grf file
 		} else {
 			return 0xFFFE; // not the same grf file
 		}
 	}
 	/* Not an 'old type' tile */
-	if (ats->grf_prop.spritegroup[0] != nullptr) { // tile has a spritegroup ?
-		if (ats->grf_prop.grffile->grfid == cur_grfid) { // same airport, same grf ?
+	if (ats->grf_prop.GetSpriteGroup() != nullptr) { // tile has a spritegroup ?
+		if (ats->grf_prop.grfid == cur_grfid) { // same airport, same grf ?
 			return ats->grf_prop.local_id;
 		} else {
 			return 0xFFFE; // Defined in another grf file
@@ -159,7 +160,7 @@ static uint32_t GetAirportTileIDAtOffset(TileIndex tile, const Station *st, uint
 	return 0xFF << 8 | ats->grf_prop.subst_id; // so just give it the substitute
 }
 
-/* virtual */ uint32_t AirportTileScopeResolver::GetVariable(byte variable, [[maybe_unused]] uint32_t parameter, bool *available) const
+/* virtual */ uint32_t AirportTileScopeResolver::GetVariable(uint8_t variable, [[maybe_unused]] uint32_t parameter, bool &available) const
 {
 	assert(this->st != nullptr);
 
@@ -190,11 +191,13 @@ static uint32_t GetAirportTileIDAtOffset(TileIndex tile, const Station *st, uint
 
 		/* Get airport tile ID at offset */
 		case 0x62: return GetAirportTileIDAtOffset(GetNearbyTile(parameter, this->tile), this->st, this->ro.grffile->grfid);
+
+		case 0x7A: return GetBadgeVariableResult(*this->ro.grffile, this->ats->badges, parameter);
 	}
 
 	Debug(grf, 1, "Unhandled airport tile variable 0x{:X}", variable);
 
-	*available = false;
+	available = false;
 	return UINT_MAX;
 }
 
@@ -216,9 +219,9 @@ AirportTileResolverObject::AirportTileResolverObject(const AirportTileSpec *ats,
 		CallbackID callback, uint32_t callback_param1, uint32_t callback_param2)
 	: ResolverObject(ats->grf_prop.grffile, callback, callback_param1, callback_param2),
 		tiles_scope(*this, ats, tile, st),
-		airport_scope(*this, tile, st, st != nullptr ? st->airport.type : (byte)AT_DUMMY, st != nullptr ? st->airport.layout : 0)
+		airport_scope(*this, tile, st, st != nullptr ? AirportSpec::Get(st->airport.type) : nullptr, st != nullptr ? st->airport.layout : 0)
 {
-	this->root_spritegroup = ats->grf_prop.spritegroup[0];
+	this->root_spritegroup = ats->grf_prop.GetSpriteGroup();
 }
 
 GrfSpecFeature AirportTileResolverObject::GetFeature() const
@@ -237,7 +240,7 @@ uint16_t GetAirportTileCallback(CallbackID callback, uint32_t param1, uint32_t p
 	return object.ResolveCallback();
 }
 
-static void AirportDrawTileLayout(const TileInfo *ti, const TileLayoutSpriteGroup *group, byte colour)
+static void AirportDrawTileLayout(const TileInfo *ti, const TileLayoutSpriteGroup *group, uint8_t colour)
 {
 	const DrawTileSprites *dts = group->ProcessRegisters(nullptr);
 
@@ -259,7 +262,7 @@ bool DrawNewAirportTile(TileInfo *ti, Station *st, const AirportTileSpec *airts)
 {
 	if (ti->tileh != SLOPE_FLAT) {
 		bool draw_old_one = true;
-		if (HasBit(airts->callback_mask, CBM_AIRT_DRAW_FOUNDATIONS)) {
+		if (airts->callback_mask.Test(AirportTileCallbackMask::DrawFoundations)) {
 			/* Called to determine the type (if any) of foundation to draw */
 			uint32_t callback_res = GetAirportTileCallback(CBID_AIRPTILE_DRAW_FOUNDATIONS, 0, 0, airts, st, ti->tile);
 			if (callback_res != CALLBACK_FAILED) draw_old_one = ConvertBooleanCallback(airts->grf_prop.grffile, CBID_AIRPTILE_DRAW_FOUNDATIONS, callback_res);
@@ -281,11 +284,11 @@ bool DrawNewAirportTile(TileInfo *ti, Station *st, const AirportTileSpec *airts)
 
 /** Helper class for animation control. */
 struct AirportTileAnimationBase : public AnimationBase<AirportTileAnimationBase, AirportTileSpec, Station, int, GetAirportTileCallback, TileAnimationFrameAnimationHelper<Station> > {
-	static const CallbackID cb_animation_speed      = CBID_AIRPTILE_ANIMATION_SPEED;
-	static const CallbackID cb_animation_next_frame = CBID_AIRPTILE_ANIM_NEXT_FRAME;
+	static constexpr CallbackID cb_animation_speed      = CBID_AIRPTILE_ANIMATION_SPEED;
+	static constexpr CallbackID cb_animation_next_frame = CBID_AIRPTILE_ANIM_NEXT_FRAME;
 
-	static const AirportTileCallbackMask cbm_animation_speed      = CBM_AIRT_ANIM_SPEED;
-	static const AirportTileCallbackMask cbm_animation_next_frame = CBM_AIRT_ANIM_NEXT_FRAME;
+	static constexpr AirportTileCallbackMask cbm_animation_speed      = AirportTileCallbackMask::AnimationSpeed;
+	static constexpr AirportTileCallbackMask cbm_animation_next_frame = AirportTileCallbackMask::AnimationNextFrame;
 };
 
 void AnimateAirportTile(TileIndex tile)
@@ -296,7 +299,7 @@ void AnimateAirportTile(TileIndex tile)
 	AirportTileAnimationBase::AnimateTile(ats, Station::GetByTile(tile), tile, HasBit(ats->animation_special_flags, 0));
 }
 
-void AirportTileAnimationTrigger(Station *st, TileIndex tile, AirpAnimationTrigger trigger, CargoID cargo_type)
+void AirportTileAnimationTrigger(Station *st, TileIndex tile, AirpAnimationTrigger trigger, CargoType cargo_type)
 {
 	const AirportTileSpec *ats = AirportTileSpec::GetByTile(tile);
 	if (!HasBit(ats->animation.triggers, trigger)) return;
@@ -304,7 +307,7 @@ void AirportTileAnimationTrigger(Station *st, TileIndex tile, AirpAnimationTrigg
 	AirportTileAnimationBase::ChangeAnimationFrame(CBID_AIRPTILE_ANIM_START_STOP, ats, st, tile, Random(), (uint8_t)trigger | (cargo_type << 8));
 }
 
-void AirportAnimationTrigger(Station *st, AirpAnimationTrigger trigger, CargoID cargo_type)
+void AirportAnimationTrigger(Station *st, AirpAnimationTrigger trigger, CargoType cargo_type)
 {
 	if (st->airport.tile == INVALID_TILE) return;
 

@@ -9,8 +9,6 @@
 
 #include "../../stdafx.h"
 #include "script_date.hpp"
-#include "script_timemode.hpp"
-#include "../../timer/timer_game_calendar.h"
 #include "../../timer/timer_game_economy.h"
 
 #include <time.h>
@@ -24,8 +22,6 @@
 
 /* static */ ScriptDate::Date ScriptDate::GetCurrentDate()
 {
-	if (ScriptTimeMode::IsCalendarMode()) return (ScriptDate::Date)TimerGameCalendar::date.base();
-
 	return (ScriptDate::Date)TimerGameEconomy::date.base();
 }
 
@@ -33,12 +29,7 @@
 {
 	if (date < 0) return DATE_INVALID;
 
-	if (ScriptTimeMode::IsCalendarMode()) {
-		::TimerGameCalendar::YearMonthDay ymd = ::TimerGameCalendar::ConvertDateToYMD(date);
-		return ymd.year.base();
-	}
-
-	::TimerGameEconomy::YearMonthDay ymd = ::TimerGameEconomy::ConvertDateToYMD(date);
+	::TimerGameEconomy::YearMonthDay ymd = ::TimerGameEconomy::ConvertDateToYMD(::TimerGameEconomy::Date{date});
 	return ymd.year.base();
 }
 
@@ -46,12 +37,7 @@
 {
 	if (date < 0) return DATE_INVALID;
 
-	if (ScriptTimeMode::IsCalendarMode()) {
-		::TimerGameCalendar::YearMonthDay ymd = ::TimerGameCalendar::ConvertDateToYMD(date);
-		return ymd.month + 1;
-	}
-
-	::TimerGameEconomy::YearMonthDay ymd = ::TimerGameEconomy::ConvertDateToYMD(date);
+	::TimerGameEconomy::YearMonthDay ymd = ::TimerGameEconomy::ConvertDateToYMD(::TimerGameEconomy::Date{date});
 	return ymd.month + 1;
 }
 
@@ -59,12 +45,7 @@
 {
 	if (date < 0) return DATE_INVALID;
 
-	if (ScriptTimeMode::IsCalendarMode()) {
-		::TimerGameCalendar::YearMonthDay ymd = ::TimerGameCalendar::ConvertDateToYMD(date);
-		return ymd.day;
-	}
-
-	::TimerGameEconomy::YearMonthDay ymd = ::TimerGameEconomy::ConvertDateToYMD(date);
+	::TimerGameEconomy::YearMonthDay ymd = ::TimerGameEconomy::ConvertDateToYMD(::TimerGameEconomy::Date{date});
 	return ymd.day;
 }
 
@@ -72,11 +53,11 @@
 {
 	if (month < 1 || month > 12) return DATE_INVALID;
 	if (day_of_month < 1 || day_of_month > 31) return DATE_INVALID;
-	if (year < 0 || year > CalendarTime::MAX_YEAR) return DATE_INVALID;
 
-	if (ScriptTimeMode::IsCalendarMode()) return (ScriptDate::Date)::TimerGameCalendar::ConvertYMDToDate(year, month - 1, day_of_month).base();
+	::TimerGameEconomy::Year timer_year{ClampTo<int32_t>(year)};
+	if (timer_year < EconomyTime::MIN_YEAR || timer_year > EconomyTime::MAX_YEAR) return DATE_INVALID;
 
-	return (ScriptDate::Date)::TimerGameEconomy::ConvertYMDToDate(year, month - 1, day_of_month).base();
+	return static_cast<ScriptDate::Date>(::TimerGameEconomy::ConvertYMDToDate(timer_year, month - 1, day_of_month).base());
 }
 
 /* static */ SQInteger ScriptDate::GetSystemTime()

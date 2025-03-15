@@ -13,13 +13,6 @@
 #include "strings_func.h"
 #include "string_func.h"
 
-/** The data required to format and validate a single parameter of a string. */
-struct StringParameter {
-	uint64_t data; ///< The data of the parameter.
-	std::unique_ptr<std::string> string; ///< Copied string value, if it has any.
-	char32_t type; ///< The #StringControlCode to interpret this data with when it's the first parameter, otherwise '\0'.
-};
-
 class StringParameters {
 protected:
 	StringParameters *parent = nullptr; ///< If not nullptr, this instance references data from this parent instance.
@@ -28,11 +21,7 @@ protected:
 	size_t offset = 0; ///< Current offset in the parameters span.
 	char32_t next_type = 0; ///< The type of the next data that is retrieved.
 
-	StringParameters(std::span<StringParameter> parameters = {}) :
-		parameters(parameters)
-	{}
-
-	StringParameter *GetNextParameterPointer();
+	const StringParameter &GetNextParameterReference();
 
 public:
 	/**
@@ -44,7 +33,8 @@ public:
 		parameters(parent.parameters.subspan(parent.offset, size))
 	{}
 
-	void PrepareForNextRun();
+	StringParameters(std::span<StringParameter> parameters = {}) : parameters(parameters) {}
+
 	void SetTypeOfNextParameter(char32_t type) { this->next_type = type; }
 
 	/**
@@ -89,11 +79,29 @@ public:
 	 * will be read.
 	 * @return The next parameter's value.
 	 */
+	uint64_t GetNextParameter()
+	{
+		struct visitor {
+			uint64_t operator()(const std::monostate &) { throw std::out_of_range("Attempt to read uninitialised parameter as integer"); }
+			uint64_t operator()(const uint64_t &arg) { return arg; }
+			uint64_t operator()(const std::string &) { throw std::out_of_range("Attempt to read string parameter as integer"); }
+		};
+
+		const auto &param = this->GetNextParameterReference();
+		return std::visit(visitor{}, param.data);
+	}
+
+	/**
+	 * Get the next parameter from our parameters.
+	 * This updates the offset, so the next time this is called the next parameter
+	 * will be read.
+	 * @tparam T The return type of the parameter.
+	 * @return The next parameter's value.
+	 */
 	template <typename T>
 	T GetNextParameter()
 	{
-		auto ptr = GetNextParameterPointer();
-		return static_cast<T>(ptr->data);
+		return static_cast<T>(this->GetNextParameter());
 	}
 
 	/**
@@ -104,14 +112,20 @@ public:
 	 */
 	const char *GetNextParameterString()
 	{
-		auto ptr = GetNextParameterPointer();
-		return ptr->string != nullptr ? ptr->string->c_str() : nullptr;
+		struct visitor {
+			const char *operator()(const std::monostate &) { throw std::out_of_range("Attempt to read uninitialised parameter as string"); }
+			const char *operator()(const uint64_t &) { throw std::out_of_range("Attempt to read integer parameter as string"); }
+			const char *operator()(const std::string &arg) { return arg.c_str(); }
+		};
+
+		const auto &param = this->GetNextParameterReference();
+		return std::visit(visitor{}, param.data);
 	}
 
 	/**
 	 * Get a new instance of StringParameters that is a "range" into the
 	 * remaining existing parameters. Upon destruction the offset in the parent
-	 * is not updated. However, calls to SetDParam do update the parameters.
+	 * is not updated. However, calls to SetParam do update the parameters.
 	 *
 	 * The returned StringParameters must not outlive this StringParameters.
 	 * @return A "range" of the string parameters.
@@ -121,7 +135,7 @@ public:
 	/**
 	 * Get a new instance of StringParameters that is a "range" into the
 	 * remaining existing parameters from the given offset. Upon destruction the
-	 * offset in the parent is not updated. However, calls to SetDParam do
+	 * offset in the parent is not updated. However, calls to SetParam do
 	 * update the parameters.
 	 *
 	 * The returned StringParameters must not outlive this StringParameters.
@@ -146,15 +160,19 @@ public:
 		return this->parameters[offset].type;
 	}
 
+	void SetParam(size_t n, const StringParameterData &v)
+	{
+		assert(n < this->parameters.size());
+		this->parameters[n].data = v;
+	}
+
 	void SetParam(size_t n, uint64_t v)
 	{
 		assert(n < this->parameters.size());
 		this->parameters[n].data = v;
-		this->parameters[n].string.reset();
 	}
 
-	template <typename T, std::enable_if_t<std::is_base_of<StrongTypedefBase, T>::value, int> = 0>
-	void SetParam(size_t n, T v)
+	void SetParam(size_t n, ConvertibleThroughBase auto v)
 	{
 		SetParam(n, v.base());
 	}
@@ -162,8 +180,7 @@ public:
 	void SetParam(size_t n, const char *str)
 	{
 		assert(n < this->parameters.size());
-		this->parameters[n].data = 0;
-		this->parameters[n].string = std::make_unique<std::string>(str);
+		this->parameters[n].data = str;
 	}
 
 	void SetParam(size_t n, const std::string &str) { this->SetParam(n, str.c_str()); }
@@ -171,76 +188,15 @@ public:
 	void SetParam(size_t n, std::string &&str)
 	{
 		assert(n < this->parameters.size());
-		this->parameters[n].data = 0;
-		this->parameters[n].string = std::make_unique<std::string>(std::move(str));
+		this->parameters[n].data = std::move(str);
 	}
 
-	uint64_t GetParam(size_t n) const
+	const StringParameterData &GetParam(size_t n) const
 	{
 		assert(n < this->parameters.size());
-		assert(this->parameters[n].string == nullptr);
 		return this->parameters[n].data;
 	}
-
-	/**
-	 * Get the stored string of the parameter, or \c nullptr when there is none.
-	 * @param n The index into the parameters.
-	 * @return The stored string.
-	 */
-	const char *GetParamStr(size_t n) const
-	{
-		assert(n < this->parameters.size());
-		auto &param = this->parameters[n];
-		return param.string != nullptr ? param.string->c_str() : nullptr;
-	}
 };
-
-/**
- * Extension of StringParameters with its own statically sized buffer for
- * the parameters.
- */
-template <size_t N>
-class ArrayStringParameters : public StringParameters {
-	std::array<StringParameter, N> params{}; ///< The actual parameters
-
-public:
-	ArrayStringParameters()
-	{
-		this->parameters = std::span(params.data(), params.size());
-	}
-
-	ArrayStringParameters(ArrayStringParameters&& other) noexcept
-	{
-		*this = std::move(other);
-	}
-
-	ArrayStringParameters& operator=(ArrayStringParameters &&other) noexcept
-	{
-		this->offset = other.offset;
-		this->next_type = other.next_type;
-		this->params = std::move(other.params);
-		this->parameters = std::span(params.data(), params.size());
-		return *this;
-	}
-
-	ArrayStringParameters(const ArrayStringParameters &other) = delete;
-	ArrayStringParameters& operator=(const ArrayStringParameters &other) = delete;
-};
-
-/**
- * Helper to create the StringParameters with its own buffer with the given
- * parameter values.
- * @param args The parameters to set for the to be created StringParameters.
- * @return The constructed StringParameters.
- */
-template <typename... Args>
-static auto MakeParameters(const Args&... args)
-{
-	ArrayStringParameters<sizeof...(args)> parameters;
-	size_t index = 0;
-	(parameters.SetParam(index++, std::forward<const Args&>(args)), ...);
-	return parameters;
-}
 
 /**
  * Equivalent to the std::back_insert_iterator in function, with some
@@ -259,8 +215,7 @@ public:
 
 	/**
 	 * Create the builder of an external buffer.
-	 * @param start The start location to write to.
-	 * @param last  The last location to write to.
+	 * @param string The string to write to.
 	 */
 	StringBuilder(std::string &string) : string(&string) {}
 
@@ -316,7 +271,6 @@ public:
 	/**
 	 * Remove the given amount of characters from the back of the string.
 	 * @param amount The amount of characters to remove.
-	 * @return true iff there was enough space and the character got added.
 	 */
 	void RemoveElementsFromBack(size_t amount)
 	{
@@ -343,6 +297,7 @@ public:
 };
 
 void GetStringWithArgs(StringBuilder &builder, StringID string, StringParameters &args, uint case_index = 0, bool game_script = false);
+void GetStringWithArgs(StringBuilder &builder, StringID string, std::span<StringParameter> params, uint case_index = 0, bool game_script = false);
 std::string GetStringWithArgs(StringID string, StringParameters &args);
 
 /* Do not leak the StringBuilder to everywhere. */
@@ -350,6 +305,6 @@ void GenerateTownNameString(StringBuilder &builder, size_t lang, uint32_t seed);
 void GetTownName(StringBuilder &builder, const struct Town *t);
 void GRFTownNameGenerate(StringBuilder &builder, uint32_t grfid, uint16_t gen, uint32_t seed);
 
-uint RemapNewGRFStringControlCode(uint scc, const char **str, StringParameters &parameters, bool modify_parameters);
+char32_t RemapNewGRFStringControlCode(char32_t scc, const char **str);
 
 #endif /* STRINGS_INTERNAL_H */

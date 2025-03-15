@@ -1,11 +1,10 @@
 add_files(
-    alloc_func.cpp
-    alloc_func.hpp
     alloc_type.hpp
     backup_type.hpp
+    base_bitset_type.hpp
     bitmath_func.hpp
+    convertible_through_base.hpp
     endian_func.hpp
-    endian_type.hpp
     enum_type.hpp
     format.hpp
     geometry_func.cpp

@@ -1,11 +1,11 @@
-cmake_minimum_required(VERSION 3.9)
+cmake_minimum_required(VERSION 3.16)
 
 if (NOT HOST_BINARY_DIR)
     project(settingsgen)
 
     set(sourcefiles
             settingsgen.cpp
-            ../core/alloc_func.cpp
+            ../3rdparty/fmt/format.cc
             ../misc/getoptdata.cpp
             ../error.cpp
             ../ini_load.cpp

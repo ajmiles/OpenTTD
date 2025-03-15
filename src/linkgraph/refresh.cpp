@@ -35,7 +35,7 @@
 	HopSet seen_hops;
 	LinkRefresher refresher(v, &seen_hops, allow_merge, is_full_loading);
 
-	refresher.RefreshLinks(first, first, v->last_loading_station != INVALID_STATION ? 1 << HAS_CARGO : 0);
+	refresher.RefreshLinks(first, first, v->last_loading_station != StationID::Invalid() ? 1 << HAS_CARGO : 0);
 }
 
 /**
@@ -70,8 +70,6 @@ LinkRefresher::LinkRefresher(Vehicle *vehicle, HopSet *seen_hops, bool allow_mer
 	vehicle(vehicle), seen_hops(seen_hops), cargo(INVALID_CARGO), allow_merge(allow_merge),
 	is_full_loading(is_full_loading)
 {
-	memset(this->capacities, 0, sizeof(this->capacities));
-
 	/* Assemble list of capacities and set last loading stations to 0. */
 	for (Vehicle *v = this->vehicle; v != nullptr; v = v->Next()) {
 		this->refit_capacities.push_back(RefitDesc(v->cargo_type, v->cargo_cap, v->refit_cap));
@@ -87,7 +85,7 @@ LinkRefresher::LinkRefresher(Vehicle *vehicle, HopSet *seen_hops, bool allow_mer
  * @param refit_cargo Cargo to refit to.
  * @return True if any vehicle was refit; false if none was.
  */
-bool LinkRefresher::HandleRefit(CargoID refit_cargo)
+bool LinkRefresher::HandleRefit(CargoType refit_cargo)
 {
 	this->cargo = refit_cargo;
 	RefitList::iterator refit_it = this->refit_capacities.begin();
@@ -101,8 +99,8 @@ bool LinkRefresher::HandleRefit(CargoID refit_cargo)
 		any_refit = true;
 
 		/* Back up the vehicle's cargo type */
-		CargoID temp_cid = v->cargo_type;
-		byte temp_subtype = v->cargo_subtype;
+		CargoType temp_cargo_type = v->cargo_type;
+		uint8_t temp_subtype = v->cargo_subtype;
 		v->cargo_type = this->cargo;
 		v->cargo_subtype = GetBestFittingSubType(v, v, this->cargo);
 
@@ -110,7 +108,7 @@ bool LinkRefresher::HandleRefit(CargoID refit_cargo)
 		uint amount = e->DetermineCapacity(v, &mail_capacity);
 
 		/* Restore the original cargo type */
-		v->cargo_type = temp_cid;
+		v->cargo_type = temp_cargo_type;
 		v->cargo_subtype = temp_subtype;
 
 		/* Skip on next refit. */
@@ -200,11 +198,11 @@ const Order *LinkRefresher::PredictNextOrder(const Order *cur, const Order *next
  */
 void LinkRefresher::RefreshStats(const Order *cur, const Order *next)
 {
-	StationID next_station = next->GetDestination();
-	Station *st = Station::GetIfValid(cur->GetDestination());
-	if (st != nullptr && next_station != INVALID_STATION && next_station != st->index) {
+	StationID next_station = next->GetDestination().ToStationID();
+	Station *st = Station::GetIfValid(cur->GetDestination().ToStationID());
+	if (st != nullptr && next_station != StationID::Invalid() && next_station != st->index) {
 		Station *st_to = Station::Get(next_station);
-		for (CargoID c = 0; c < NUM_CARGO; c++) {
+		for (CargoType c = 0; c < NUM_CARGO; c++) {
 			/* Refresh the link and give it a minimum capacity. */
 
 			uint cargo_quantity = this->capacities[c];
@@ -220,7 +218,7 @@ void LinkRefresher::RefreshStats(const Order *cur, const Order *next)
 
 			/* A link is at least partly restricted if a vehicle can't load at its source. */
 			EdgeUpdateMode restricted_mode = (cur->GetLoadType() & OLFB_NO_LOAD) == 0 ?
-						EUM_UNRESTRICTED : EUM_RESTRICTED;
+						EdgeUpdateMode::Unrestricted : EdgeUpdateMode::Restricted;
 			/* This estimates the travel time of the link as the time needed
 			 * to travel between the stations at half the max speed of the consist.
 			 * The result is in tiles/tick (= 2048 km-ish/h). */
@@ -238,14 +236,14 @@ void LinkRefresher::RefreshStats(const Order *cur, const Order *next)
 				if (effective_capacity > (uint)this->vehicle->orders->GetTotalDuration()) {
 					IncreaseStats(st, c, next_station, effective_capacity /
 							this->vehicle->orders->GetTotalDuration(), 0, 0,
-							EUM_INCREASE | restricted_mode);
+							{EdgeUpdateMode::Increase, restricted_mode});
 				} else if (RandomRange(this->vehicle->orders->GetTotalDuration()) < effective_capacity) {
-					IncreaseStats(st, c, next_station, 1, 0, 0, EUM_INCREASE | restricted_mode);
+					IncreaseStats(st, c, next_station, 1, 0, 0, {EdgeUpdateMode::Increase, restricted_mode});
 				} else {
-					IncreaseStats(st, c, next_station, cargo_quantity, 0, time_estimate, EUM_REFRESH | restricted_mode);
+					IncreaseStats(st, c, next_station, cargo_quantity, 0, time_estimate, {EdgeUpdateMode::Refresh, restricted_mode});
 				}
 			} else {
-				IncreaseStats(st, c, next_station, cargo_quantity, 0, time_estimate, EUM_REFRESH | restricted_mode);
+				IncreaseStats(st, c, next_station, cargo_quantity, 0, time_estimate, {EdgeUpdateMode::Refresh, restricted_mode});
 			}
 		}
 	}
@@ -273,7 +271,7 @@ void LinkRefresher::RefreshLinks(const Order *cur, const Order *next, uint8_t fl
 			} else if (!HasBit(flags, IN_AUTOREFIT)) {
 				SetBit(flags, IN_AUTOREFIT);
 				LinkRefresher backup(*this);
-				for (CargoID c = 0; c != NUM_CARGO; ++c) {
+				for (CargoType c = 0; c != NUM_CARGO; ++c) {
 					if (CargoSpec::Get(c)->IsValid() && this->HandleRefit(c)) {
 						this->RefreshLinks(cur, next, flags, num_hops);
 						*this = backup;

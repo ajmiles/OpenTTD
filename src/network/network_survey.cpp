@@ -9,7 +9,7 @@
 
 #include "../stdafx.h"
 #include "network_survey.h"
-#include "settings_table.h"
+#include "../settings_table.h"
 #include "network.h"
 #include "network_func.h"
 #include "../debug.h"
@@ -18,8 +18,6 @@
 #include "../3rdparty/fmt/std.h"
 
 #include "../safeguards.h"
-
-extern std::string _savegame_id;
 
 NetworkSurveyHandler _survey = {};
 
@@ -43,7 +41,6 @@ std::string NetworkSurveyHandler::CreatePayload(Reason reason, bool for_preview)
 
 	survey["schema"] = NETWORK_SURVEY_VERSION;
 	survey["reason"] = reason;
-	survey["id"] = _savegame_id;
 	survey["date"] = fmt::format("{:%Y-%m-%d %H:%M:%S} (UTC)", fmt::gmtime(time(nullptr)));
 
 #ifdef SURVEY_KEY
@@ -52,6 +49,8 @@ std::string NetworkSurveyHandler::CreatePayload(Reason reason, bool for_preview)
 #else
 	survey["key"] = "";
 #endif
+
+	SurveyGameSession(survey["session"]);
 
 	{
 		auto &info = survey["info"];

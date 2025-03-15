@@ -36,8 +36,6 @@
 
 #include "safeguards.h"
 
-std::string _savegame_id; ///< Unique ID of the current savegame.
-
 extern TileIndex _cur_tileloop_tile;
 extern void MakeNewgameSettingsLive();
 
@@ -56,7 +54,6 @@ void InitializeObjects();
 void InitializeTrees();
 void InitializeCompanies();
 void InitializeCheats();
-void InitializeNPF();
 void InitializeOldNames();
 
 /**
@@ -89,7 +86,7 @@ std::string GenerateUid(std::string_view subject)
  */
 void GenerateSavegameId()
 {
-	_savegame_id = GenerateUid("OpenTTD Savegame ID");
+	_game_session_stats.savegame_id = GenerateUid("OpenTTD Savegame ID");
 }
 
 void InitializeGame(uint size_x, uint size_y, bool reset_date, bool reset_settings)
@@ -100,10 +97,10 @@ void InitializeGame(uint size_x, uint size_y, bool reset_date, bool reset_settin
 
 	Map::Allocate(size_x, size_y);
 
-	_pause_mode = PM_UNPAUSED;
+	_pause_mode = {};
 	_game_speed = 100;
 	TimerGameTick::counter = 0;
-	_cur_tileloop_tile = 1;
+	_cur_tileloop_tile = TileIndex{1};
 	_thd.redsq = INVALID_TILE;
 	if (reset_settings) MakeNewgameSettingsLive();
 
@@ -115,16 +112,16 @@ void InitializeGame(uint size_x, uint size_y, bool reset_date, bool reset_settin
 
 		if (TimerGameEconomy::UsingWallclockUnits()) {
 			/* If using wallclock units, start at year 1. */
-			TimerGameEconomy::SetDate(TimerGameEconomy::ConvertYMDToDate(1, 0, 1), 0);
+			TimerGameEconomy::SetDate(TimerGameEconomy::ConvertYMDToDate(TimerGameEconomy::Year{1}, 0, 1), 0);
 		} else {
 			/* Otherwise, we always keep the economy date synced with the calendar date. */
-			TimerGameEconomy::SetDate(new_date.base(), 0);
+			TimerGameEconomy::SetDate(TimerGameEconomy::Date{new_date.base()}, 0);
 		}
 		InitializeOldNames();
 	}
 
 	LinkGraphSchedule::Clear();
-	PoolBase::Clean(PT_NORMAL);
+	PoolBase::Clean(PoolType::Normal);
 
 	RebuildStationKdtree();
 	RebuildTownKdtree();
@@ -150,9 +147,6 @@ void InitializeGame(uint size_x, uint size_y, bool reset_date, bool reset_settin
 	InitializeTrees();
 	InitializeIndustries();
 	InitializeObjects();
-	InitializeBuildingCounts();
-
-	InitializeNPF();
 
 	InitializeCompanies();
 	AI::Initialize();

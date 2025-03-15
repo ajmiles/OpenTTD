@@ -74,7 +74,7 @@ protected:
 	std::vector<char> http_response;              ///< The HTTP response to the requests we've been doing
 	int http_response_index;                      ///< Where we are, in the response, with handling it
 
-	FILE *curFile;        ///< Currently downloaded file
+	std::optional<FileHandle> curFile; ///< Currently downloaded file
 	ContentInfo *curInfo; ///< Information about the currently downloaded file
 	bool isConnecting;    ///< Whether we're connecting
 	bool isCancelled;     ///< Whether the download has been cancelled
@@ -130,7 +130,7 @@ public:
 
 	void ReverseLookupDependency(ConstContentVector &parents, const ContentInfo *child) const;
 	void ReverseLookupTreeDependency(ConstContentVector &tree, const ContentInfo *child) const;
-	void CheckDependencyState(ContentInfo *ci);
+	void CheckDependencyState(const ContentInfo *ci);
 
 	/** Get the number of content items we know locally. */
 	uint Length() const { return (uint)this->infos.size(); }
@@ -146,13 +146,13 @@ public:
 	/** Add a callback to this class */
 	void AddCallback(ContentCallback *cb) { include(this->callbacks, cb); }
 	/** Remove a callback */
-	void RemoveCallback(ContentCallback *cb) { this->callbacks.erase(std::find(this->callbacks.begin(), this->callbacks.end(), cb)); }
+	void RemoveCallback(ContentCallback *cb) { this->callbacks.erase(std::ranges::find(this->callbacks, cb)); }
 };
 
 extern ClientNetworkContentSocketHandler _network_content_client;
 
 void ShowNetworkContentListWindow(ContentVector *cv = nullptr, ContentType type1 = CONTENT_TYPE_END, ContentType type2 = CONTENT_TYPE_END);
 
-void ShowMissingContentWindow(const struct GRFConfig *list);
+void ShowMissingContentWindow(const GRFConfigList &list);
 
 #endif /* NETWORK_CONTENT_H */

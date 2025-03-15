@@ -17,7 +17,7 @@
  * Tile Location group.
  * This defines whether the X and or Y coordinate of a tile is even
  */
-enum TLG {
+enum TLG : uint8_t {
 	XEVEN_YEVEN = 0,
 	XEVEN_YODD  = 1,
 	XODD_YEVEN  = 2,
@@ -30,7 +30,7 @@ enum TLG {
  * into account: the tile being drawn itself (the home tile, the one in
  * ti->tile), and the neighbouring tile
  */
-enum TileSource {
+enum TileSource : uint8_t {
 	TS_HOME      = 0,
 	TS_NEIGHBOUR = 1,
 
@@ -40,7 +40,7 @@ enum TileSource {
 static const uint NUM_TRACKS_AT_PCP = 6;
 
 /** Which PPPs are possible at all on a given PCP */
-static const byte AllowedPPPonPCP[DIAGDIR_END] = {
+static const uint8_t AllowedPPPonPCP[DIAGDIR_END] = {
 	1 << DIR_N | 1 << DIR_E  | 1 << DIR_SE | 1 << DIR_S | 1 << DIR_W  | 1 << DIR_NW,
 	1 << DIR_N | 1 << DIR_NE | 1 << DIR_E  | 1 << DIR_S | 1 << DIR_SW | 1 << DIR_W,
 	1 << DIR_N | 1 << DIR_E  | 1 << DIR_SE | 1 << DIR_S | 1 << DIR_W  | 1 << DIR_NW,
@@ -52,7 +52,7 @@ static const byte AllowedPPPonPCP[DIAGDIR_END] = {
  * the following system is used: if you rotate the PCP so that it is in the
  * north, the eastern PPP belongs to the tile.
  */
-static const byte OwnedPPPonPCP[DIAGDIR_END] = {
+static const uint8_t OwnedPPPonPCP[DIAGDIR_END] = {
 	1 << DIR_SE | 1 << DIR_S  | 1 << DIR_SW | 1 << DIR_W,
 	1 << DIR_N  | 1 << DIR_SW | 1 << DIR_W  | 1 << DIR_NW,
 	1 << DIR_N  | 1 << DIR_NE | 1 << DIR_E  | 1 << DIR_NW,
@@ -76,7 +76,7 @@ static const DiagDirection PCPpositions[TRACK_END][2] = {
  * which are not on either end of the track are fully preferred.
  * @see PCPpositions
  */
-static const byte PreferredPPPofTrackAtPCP[TRACK_END][DIAGDIR_END] = {
+static const uint8_t PreferredPPPofTrackAtPCP[TRACK_END][DIAGDIR_END] = {
 	{    // X
 		1 << DIR_NE | 1 << DIR_SE | 1 << DIR_NW, // NE
 		PCP_NOT_ON_TRACK,                        // SE
@@ -119,7 +119,7 @@ static const byte PreferredPPPofTrackAtPCP[TRACK_END][DIAGDIR_END] = {
  * so there are certain tiles which we ignore. A straight line is found if
  * we have exactly two PPPs.
  */
-static const byte IgnoredPCP[NUM_IGNORE_GROUPS][TLG_END][DIAGDIR_END] = {
+static const uint8_t IgnoredPCP[NUM_IGNORE_GROUPS][TLG_END][DIAGDIR_END] = {
 	{   // Ignore group 1, X and Y tracks
 		{     // X even, Y even
 			IGNORE_NONE,
@@ -194,7 +194,7 @@ static const byte IgnoredPCP[NUM_IGNORE_GROUPS][TLG_END][DIAGDIR_END] = {
 #undef NO_IGNORE
 
 /** Which pylons can definitely NOT be built */
-static const byte DisallowedPPPofTrackAtPCP[TRACK_END][DIAGDIR_END] = {
+static const uint8_t DisallowedPPPofTrackAtPCP[TRACK_END][DIAGDIR_END] = {
 	{1 << DIR_SW | 1 << DIR_NE, 0,           1 << DIR_SW | 1 << DIR_NE, 0          }, // X
 	{0,           1 << DIR_NW | 1 << DIR_SE, 0,           1 << DIR_NW | 1 << DIR_SE}, // Y
 	{1 << DIR_W | 1 << DIR_E,  0,           0,           1 << DIR_W | 1 << DIR_E }, // UPPER
@@ -254,7 +254,7 @@ static const int8_t y_ppp_offsets[DIR_END] = {-2,  0,  2,  4,  2,  0, -2, -4};
 /**
  * Offset for pylon sprites from the base pylon sprite.
  */
-enum PylonSpriteOffset {
+enum PylonSpriteOffset : uint8_t {
 	PSO_Y_NE,
 	PSO_Y_SW,
 	PSO_X_NW,
@@ -280,7 +280,7 @@ static const uint8_t pylon_sprites[] = {
 /**
  * Offset for wire sprites from the base wire sprite.
  */
-enum WireSpriteOffset {
+enum WireSpriteOffset : uint8_t {
 	WSO_X_SHORT,
 	WSO_Y_SHORT,
 	WSO_EW_SHORT,
@@ -419,7 +419,7 @@ static const SortableSpriteStruct RailCatenarySpriteData_Tunnel[] = {
  * <li>Position of the Pylon relative to the track</li>
  * <li>Position of the Pylon inside the tile</li></ol>
  */
-enum RailCatenarySprite {
+enum RailCatenarySprite : uint8_t {
 	WIRE_X_FLAT_SW,
 	WIRE_X_FLAT_NE,
 	WIRE_X_FLAT_BOTH,

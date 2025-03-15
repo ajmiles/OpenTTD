@@ -17,6 +17,7 @@
 #include "timer/timer_game_calendar.h"
 #include "core/enum_type.hpp"
 #include "newgrf.h"
+#include "newgrf_badge_type.h"
 #include "economy_func.h"
 
 
@@ -33,30 +34,20 @@ DECLARE_ENUM_AS_BIT_SET(RoadTramTypes)
 
 static const RoadTramType _roadtramtypes[] = { RTT_ROAD, RTT_TRAM };
 
-/** Roadtype flag bit numbers. Starts with RO instead of R because R is used for rails */
-enum RoadTypeFlag {
-	ROTF_CATENARY = 0,                                     ///< Bit number for adding catenary
-	ROTF_NO_LEVEL_CROSSING,                                ///< Bit number for disabling level crossing
-	ROTF_NO_HOUSES,                                        ///< Bit number for setting this roadtype as not house friendly
-	ROTF_HIDDEN,                                           ///< Bit number for hidden from construction.
-	ROTF_TOWN_BUILD,                                       ///< Bit number for allowing towns to build this roadtype.
+/** Roadtype flag bit numbers. */
+enum class RoadTypeFlag : uint8_t {
+	Catenary        = 0, ///< Bit number for adding catenary
+	NoLevelCrossing = 1, ///< Bit number for disabling level crossing
+	NoHouses        = 2, ///< Bit number for setting this roadtype as not house friendly
+	Hidden          = 3, ///< Bit number for hidden from construction.
+	TownBuild       = 4, ///< Bit number for allowing towns to build this roadtype.
 };
-
-/** Roadtype flags. Starts with RO instead of R because R is used for rails */
-enum RoadTypeFlags : uint8_t {
-	ROTFB_NONE = 0,                                        ///< All flags cleared.
-	ROTFB_CATENARY          = 1 << ROTF_CATENARY,          ///< Value for drawing a catenary.
-	ROTFB_NO_LEVEL_CROSSING = 1 << ROTF_NO_LEVEL_CROSSING, ///< Value for disabling a level crossing.
-	ROTFB_NO_HOUSES         = 1 << ROTF_NO_HOUSES,         ///< Value for for setting this roadtype as not house friendly.
-	ROTFB_HIDDEN            = 1 << ROTF_HIDDEN,            ///< Value for hidden from construction.
-	ROTFB_TOWN_BUILD        = 1 << ROTF_TOWN_BUILD,        ///< Value for allowing towns to build this roadtype.
-};
-DECLARE_ENUM_AS_BIT_SET(RoadTypeFlags)
+using RoadTypeFlags = EnumBitSet<RoadTypeFlag, uint8_t>;
 
 struct SpriteGroup;
 
 /** Sprite groups for a roadtype. */
-enum RoadTypeSpriteGroup {
+enum RoadTypeSpriteGroup : uint8_t {
 	ROTSG_CURSORS,        ///< Optional: Cursor and toolbar icon images
 	ROTSG_OVERLAY,        ///< Optional: Images for overlaying track
 	ROTSG_GROUND,         ///< Required: Main group of ground images
@@ -154,7 +145,7 @@ public:
 	/**
 	 * Colour on mini-map
 	 */
-	byte map_colour;
+	uint8_t map_colour;
 
 	/**
 	 * Introduction date.
@@ -179,7 +170,7 @@ public:
 	/**
 	 * The sorting order of this roadtype for the toolbar dropdown.
 	 */
-	byte sorting_order;
+	uint8_t sorting_order;
 
 	/**
 	 * NewGRF providing the Action3 for the roadtype. nullptr if not available.
@@ -190,6 +181,8 @@ public:
 	 * Sprite groups for resolving sprites
 	 */
 	const SpriteGroup *group[ROTSG_END];
+
+	std::vector<BadgeID> badges;
 
 	inline bool UsesOverlay() const
 	{
@@ -235,9 +228,9 @@ inline const RoadTypeInfo *GetRoadTypeInfo(RoadType roadtype)
  * Checks if an engine of the given RoadType got power on a tile with a given
  * RoadType. This would normally just be an equality check, but for electrified
  * roads (which also support non-electric vehicles).
- * @return Whether the engine got power on this tile.
  * @param  enginetype The RoadType of the engine we are considering.
  * @param  tiletype   The RoadType of the tile we are considering.
+ * @return Whether the engine got power on this tile.
  */
 inline bool HasPowerOnRoad(RoadType enginetype, RoadType tiletype)
 {
@@ -295,7 +288,7 @@ inline Money RoadConvertCost(RoadType from, RoadType to)
 inline bool RoadNoLevelCrossing(RoadType roadtype)
 {
 	assert(roadtype < ROADTYPE_END);
-	return HasBit(GetRoadTypeInfo(roadtype)->flags, ROTF_NO_LEVEL_CROSSING);
+	return GetRoadTypeInfo(roadtype)->flags.Test(RoadTypeFlag::NoLevelCrossing);
 }
 
 RoadType GetRoadTypeByLabel(RoadTypeLabel label, bool allow_alternate_labels = true);

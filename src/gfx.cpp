@@ -22,6 +22,7 @@
 #include "newgrf_debug.h"
 #include "core/backup_type.hpp"
 #include "core/container_func.hpp"
+#include "core/geometry_func.hpp"
 #include "viewport_func.h"
 
 #include "table/string_colours.h"
@@ -30,9 +31,9 @@
 
 #include "safeguards.h"
 
-byte _dirkeys;        ///< 1 = left, 2 = up, 4 = right, 8 = down
+uint8_t _dirkeys;        ///< 1 = left, 2 = up, 4 = right, 8 = down
 bool _fullscreen;
-byte _support8bpp;
+uint8_t _support8bpp;
 CursorVars _cursor;
 bool _ctrl_pressed;   ///< Is Ctrl pressed?
 bool _shift_pressed;  ///< Is Shift pressed?
@@ -46,18 +47,18 @@ bool _screen_disable_anim = false;   ///< Disable palette animation (important f
 std::atomic<bool> _exit_game;
 GameMode _game_mode;
 SwitchMode _switch_mode;  ///< The next mainloop command.
-std::chrono::steady_clock::time_point _switch_mode_time; ///< The time when the switch mode was requested.
-PauseMode _pause_mode;
+PauseModes _pause_mode;
+GameSessionStats _game_session_stats; ///< Statistics about the current session.
 
-static byte _stringwidth_table[FS_END][224]; ///< Cache containing width of often used characters. @see GetCharacterWidth()
+static uint8_t _stringwidth_table[FS_END][224]; ///< Cache containing width of often used characters. @see GetCharacterWidth()
 DrawPixelInfo *_cur_dpi;
 
 static void GfxMainBlitterViewport(const Sprite *sprite, int x, int y, BlitterMode mode, const SubSprite *sub = nullptr, SpriteID sprite_id = SPR_CURSOR_MOUSE);
-static void GfxMainBlitter(const Sprite *sprite, int x, int y, BlitterMode mode, const SubSprite *sub = nullptr, SpriteID sprite_id = SPR_CURSOR_MOUSE, ZoomLevel zoom = ZOOM_LVL_NORMAL);
+static void GfxMainBlitter(const Sprite *sprite, int x, int y, BlitterMode mode, const SubSprite *sub = nullptr, SpriteID sprite_id = SPR_CURSOR_MOUSE, ZoomLevel zoom = ZOOM_LVL_MIN);
 
 static ReusableBuffer<uint8_t> _cursor_backup;
 
-ZoomLevel _gui_zoom  = ZOOM_LVL_OUT_4X;     ///< GUI Zoom level
+ZoomLevel _gui_zoom  = ZOOM_LVL_NORMAL;     ///< GUI Zoom level
 ZoomLevel _font_zoom = _gui_zoom;           ///< Sprite font Zoom level (not clamped)
 int _gui_scale       = MIN_INTERFACE_SCALE; ///< GUI scale, 100 is 100%.
 int _gui_scale_cfg;                         ///< GUI scale in config.
@@ -70,14 +71,15 @@ int _gui_scale_cfg;                         ///< GUI scale in config.
  * @ingroup dirty
  */
 static Rect _invalid_rect;
-static const byte *_colour_remap_ptr;
-static byte _string_colourremap[3]; ///< Recoloursprite for stringdrawing. The grf loader ensures that #SpriteType::Font sprites only use colours 0 to 2.
+static const uint8_t *_colour_remap_ptr;
+static uint8_t _string_colourremap[3]; ///< Recoloursprite for stringdrawing. The grf loader ensures that #SpriteType::Font sprites only use colours 0 to 2.
 
 static const uint DIRTY_BLOCK_HEIGHT   = 8;
 static const uint DIRTY_BLOCK_WIDTH    = 64;
 
-static uint _dirty_bytes_per_line = 0;
-static byte *_dirty_blocks = nullptr;
+static size_t _dirty_blocks_per_row = 0;
+static size_t _dirty_blocks_per_column = 0;
+static std::vector<uint8_t> _dirty_blocks;
 extern uint _dirty_block_colour;
 
 void GfxScroll(int left, int top, int width, int height, int xo, int yo)
@@ -99,7 +101,7 @@ void GfxScroll(int left, int top, int width, int height, int xo, int yo)
 /**
  * Applies a certain FillRectMode-operation to a rectangle [left, right] x [top, bottom] on the screen.
  *
- * @pre dpi->zoom == ZOOM_LVL_NORMAL, right >= left, bottom >= top
+ * @pre dpi->zoom == ZOOM_LVL_MIN, right >= left, bottom >= top
  * @param left Minimum X (inclusive)
  * @param top Minimum Y (inclusive)
  * @param right Maximum X (inclusive)
@@ -118,7 +120,7 @@ void GfxFillRect(int left, int top, int right, int bottom, int colour, FillRectM
 	const int otop = top;
 	const int oleft = left;
 
-	if (dpi->zoom != ZOOM_LVL_NORMAL) return;
+	if (dpi->zoom != ZOOM_LVL_MIN) return;
 	if (left > right || top > bottom) return;
 	if (right < dpi->left || left >= dpi->left + dpi->width) return;
 	if (bottom < dpi->top || top >= dpi->top + dpi->height) return;
@@ -147,7 +149,7 @@ void GfxFillRect(int left, int top, int right, int bottom, int colour, FillRectM
 			break;
 
 		case FILLRECT_CHECKER: {
-			byte bo = (oleft - left + dpi->left + otop - top + dpi->top) & 1;
+			uint8_t bo = (oleft - left + dpi->left + otop - top + dpi->top) & 1;
 			do {
 				for (int i = (bo ^= 1); i < right; i += 2) blitter->SetPixel(dst, i, 0, (uint8_t)colour);
 				dst = blitter->MoveTo(dst, 0, 1);
@@ -198,7 +200,7 @@ static std::vector<LineSegment> MakePolygonSegments(const std::vector<Point> &sh
  * The odd-even winding rule is used, i.e. self-intersecting polygons will have holes in them.
  * Left and top edges are inclusive, right and bottom edges are exclusive.
  * @note For rectangles the GfxFillRect function will be faster.
- * @pre dpi->zoom == ZOOM_LVL_NORMAL
+ * @pre dpi->zoom == ZOOM_LVL_MIN
  * @param shape List of points on the polygon.
  * @param colour An 8 bit palette index (FILLRECT_OPAQUE and FILLRECT_CHECKER) or a recolour spritenumber (FILLRECT_RECOLOUR).
  * @param mode
@@ -210,7 +212,7 @@ void GfxFillPolygon(const std::vector<Point> &shape, int colour, FillRectMode mo
 {
 	Blitter *blitter = BlitterFactory::GetCurrentBlitter();
 	const DrawPixelInfo *dpi = _cur_dpi;
-	if (dpi->zoom != ZOOM_LVL_NORMAL) return;
+	if (dpi->zoom != ZOOM_LVL_MIN) return;
 
 	std::vector<LineSegment> segments = MakePolygonSegments(shape, Point{ dpi->left, dpi->top });
 
@@ -431,7 +433,7 @@ void DrawBox(int x, int y, int dx1, int dy1, int dx2, int dy2, int dx3, int dy3)
 	 *            ....V.
 	 */
 
-	static const byte colour = PC_WHITE;
+	static const uint8_t colour = PC_WHITE;
 
 	GfxDrawLineUnscaled(x, y, x + dx1, y + dy1, colour);
 	GfxDrawLineUnscaled(x, y, x + dx2, y + dy2, colour);
@@ -474,7 +476,7 @@ static void SetColourRemap(TextColour colour)
 	bool raw_colour = (colour & TC_IS_PALETTE_COLOUR) != 0;
 	colour &= ~(TC_NO_SHADE | TC_IS_PALETTE_COLOUR | TC_FORCED);
 
-	_string_colourremap[1] = raw_colour ? (byte)colour : _string_colourmap[colour];
+	_string_colourremap[1] = raw_colour ? (uint8_t)colour : _string_colourmap[colour];
 	_string_colourremap[2] = no_shade ? 0 : 1;
 	_colour_remap_ptr = _string_colourremap;
 }
@@ -490,11 +492,12 @@ static void SetColourRemap(TextColour colour)
  *                  will be drawn in the right direction.
  * @param underline Whether to underline what has been drawn or not.
  * @param truncation Whether to perform string truncation or not.
+ * @param default_colour Colour of text if not specified within string.
  *
  * @return In case of left or center alignment the right most pixel we have drawn to.
  *         In case of right alignment the left most pixel we have drawn to.
  */
-static int DrawLayoutLine(const ParagraphLayouter::Line &line, int y, int left, int right, StringAlignment align, bool underline, bool truncation)
+static int DrawLayoutLine(const ParagraphLayouter::Line &line, int y, int left, int right, StringAlignment align, bool underline, bool truncation, TextColour default_colour)
 {
 	if (line.CountRuns() == 0) return 0;
 
@@ -588,6 +591,7 @@ static int DrawLayoutLine(const ParagraphLayouter::Line &line, int y, int left, 
 
 			FontCache *fc = f->fc;
 			TextColour colour = f->colour;
+			if (colour == TC_INVALID || HasFlag(default_colour, TC_FORCED)) colour = default_colour;
 			colour_has_shadow = (colour & TC_NO_SHADE) == 0 && colour != TC_BLACK;
 			SetColourRemap(do_shadow ? TC_BLACK : colour); // the last run also sets the colour for the truncation dots
 			if (do_shadow && (!fc->GetDrawGlyphShadow() || !colour_has_shadow)) continue;
@@ -602,9 +606,9 @@ static int DrawLayoutLine(const ParagraphLayouter::Line &line, int y, int left, 
 				/* Not a valid glyph (empty) */
 				if (glyph == 0xFFFF) continue;
 
-				int begin_x = positions[i].x     + left - offset_x;
-				int end_x   = positions[i + 1].x + left - offset_x  - 1;
-				int top     = positions[i].y + y;
+				int begin_x = positions[i].left + left - offset_x;
+				int end_x = positions[i].right + left - offset_x;
+				int top = positions[i].top + y;
 
 				/* Truncated away. */
 				if (truncation && (begin_x < min_x || end_x > max_x)) continue;
@@ -615,14 +619,14 @@ static int DrawLayoutLine(const ParagraphLayouter::Line &line, int y, int left, 
 
 				if (do_shadow && (glyph & SPRITE_GLYPH) != 0) continue;
 
-				GfxMainBlitter(sprite, begin_x + (do_shadow ? shadow_offset : 0), top + (do_shadow ? shadow_offset : 0), BM_COLOUR_REMAP);
+				GfxMainBlitter(sprite, begin_x + (do_shadow ? shadow_offset : 0), top + (do_shadow ? shadow_offset : 0), BlitterMode::ColourRemap);
 			}
 		}
 
 		if (truncation && (!do_shadow || (dot_has_shadow && colour_has_shadow))) {
 			int x = (_current_text_dir == TD_RTL) ? left : (right - 3 * dot_width);
 			for (int i = 0; i < 3; i++, x += dot_width) {
-				GfxMainBlitter(dot_sprite, x + (do_shadow ? shadow_offset : 0), y + (do_shadow ? shadow_offset : 0), BM_COLOUR_REMAP);
+				GfxMainBlitter(dot_sprite, x + (do_shadow ? shadow_offset : 0), y + (do_shadow ? shadow_offset : 0), BlitterMode::ColourRemap);
 			}
 		}
 	}
@@ -664,10 +668,10 @@ int DrawString(int left, int right, int top, std::string_view str, TextColour co
 		return 0;
 	}
 
-	Layouter layout(str, INT32_MAX, colour, fontsize);
+	Layouter layout(str, INT32_MAX, fontsize);
 	if (layout.empty()) return 0;
 
-	return DrawLayoutLine(*layout.front(), top, left, right, align, underline, true);
+	return DrawLayoutLine(*layout.front(), top, left, right, align, underline, true, colour);
 }
 
 /**
@@ -701,7 +705,7 @@ int DrawString(int left, int right, int top, StringID str, TextColour colour, St
 int GetStringHeight(std::string_view str, int maxw, FontSize fontsize)
 {
 	assert(maxw > 0);
-	Layouter layout(str, maxw, TC_FROMSTRING, fontsize);
+	Layouter layout(str, maxw, fontsize);
 	return layout.GetBounds().height;
 }
 
@@ -722,9 +726,9 @@ int GetStringHeight(StringID str, int maxw)
  * @param maxw maximum string width
  * @return number of lines of string when it is drawn
  */
-int GetStringLineCount(StringID str, int maxw)
+int GetStringLineCount(std::string_view str, int maxw)
 {
-	Layouter layout(GetString(str), maxw);
+	Layouter layout(str, maxw);
 	return (uint)layout.size();
 }
 
@@ -746,9 +750,9 @@ Dimension GetStringMultiLineBoundingBox(StringID str, const Dimension &suggestio
  * @param suggestion Suggested bounding box.
  * @return Bounding box for the multi-line string, may be bigger than \a suggestion.
  */
-Dimension GetStringMultiLineBoundingBox(std::string_view str, const Dimension &suggestion)
+Dimension GetStringMultiLineBoundingBox(std::string_view str, const Dimension &suggestion, FontSize fontsize)
 {
-	Dimension box = {suggestion.width, (uint)GetStringHeight(str, suggestion.width)};
+	Dimension box = {suggestion.width, (uint)GetStringHeight(str, suggestion.width, fontsize)};
 	return box;
 }
 
@@ -777,7 +781,7 @@ int DrawStringMultiLine(int left, int right, int top, int bottom, std::string_vi
 	 * do we really want to support fonts of 0 or less pixels high? */
 	if (maxh <= 0) return top;
 
-	Layouter layout(str, maxw, colour, fontsize);
+	Layouter layout(str, maxw, fontsize);
 	int total_height = layout.GetBounds().height;
 	int y;
 	switch (align & SA_VERT_MASK) {
@@ -806,7 +810,7 @@ int DrawStringMultiLine(int left, int right, int top, int bottom, std::string_vi
 			last_line = y + line_height;
 			if (first_line > y) first_line = y;
 
-			DrawLayoutLine(*line, y, left, right, align, underline, false);
+			DrawLayoutLine(*line, y, left, right, align, underline, false, colour);
 		}
 		y += line_height;
 	}
@@ -847,12 +851,12 @@ int DrawStringMultiLine(int left, int right, int top, int bottom, StringID str, 
  */
 Dimension GetStringBoundingBox(std::string_view str, FontSize start_fontsize)
 {
-	Layouter layout(str, INT32_MAX, TC_FROMSTRING, start_fontsize);
+	Layouter layout(str, INT32_MAX, start_fontsize);
 	return layout.GetBounds();
 }
 
 /**
- * Get bounding box of a string. Uses parameters set by #SetDParam if needed.
+ * Get bounding box of a string.
  * Has the same restrictions as #GetStringBoundingBox(std::string_view str, FontSize start_fontsize).
  * @param strid String to examine.
  * @return Width and height of the bounding box for the string in pixels.
@@ -864,50 +868,32 @@ Dimension GetStringBoundingBox(StringID strid, FontSize start_fontsize)
 
 /**
  * Get maximum width of a list of strings.
- * @param list List of strings, terminated with INVALID_STRING_ID.
+ * @param list List of strings.
  * @param fontsize Font size to use.
  * @return Width of longest string within the list.
  */
-uint GetStringListWidth(const StringID *list, FontSize fontsize)
+uint GetStringListWidth(std::span<const StringID> list, FontSize fontsize)
 {
 	uint width = 0;
-	for (const StringID *str = list; *str != INVALID_STRING_ID; str++) {
-		width = std::max(width, GetStringBoundingBox(*str, fontsize).width);
+	for (auto str : list) {
+		width = std::max(width, GetStringBoundingBox(str, fontsize).width);
 	}
 	return width;
 }
 
 /**
- * Get the leading corner of a character in a single-line string relative
- * to the start of the string.
- * @param str String containing the character.
- * @param ch Pointer to the character in the string.
- * @param start_fontsize Font size to start the text with.
- * @return Upper left corner of the glyph associated with the character.
+ * Get maximum dimension of a list of strings.
+ * @param list List of strings, terminated by INVALID_STRING_ID.
+ * @param fontsize Font size to use.
+ * @return Dimension of highest and longest string within the list.
  */
-Point GetCharPosInString(std::string_view str, const char *ch, FontSize start_fontsize)
+Dimension GetStringListBoundingBox(std::span<const StringID> list, FontSize fontsize)
 {
-	/* Ensure "ch" is inside "str" or at the exact end. */
-	assert(ch >= str.data() && (ch - str.data()) <= static_cast<ptrdiff_t>(str.size()));
-	auto it_ch = str.begin() + (ch - str.data());
-
-	Layouter layout(str, INT32_MAX, TC_FROMSTRING, start_fontsize);
-	return layout.GetCharPosition(it_ch);
-}
-
-/**
- * Get the character from a string that is drawn at a specific position.
- * @param str String to test.
- * @param x Position relative to the start of the string.
- * @param start_fontsize Font size to start the text with.
- * @return Index of the character position or -1 if there is no character at the position.
- */
-ptrdiff_t GetCharAtPosition(std::string_view str, int x, FontSize start_fontsize)
-{
-	if (x < 0) return -1;
-
-	Layouter layout(str, INT32_MAX, TC_FROMSTRING, start_fontsize);
-	return layout.GetCharAtPosition(x, 0);
+	Dimension d{0, 0};
+	for (auto str : list) {
+		d = maxdim(d, GetStringBoundingBox(str, fontsize));
+	}
+	return d;
 }
 
 /**
@@ -923,7 +909,7 @@ void DrawCharCentered(char32_t c, const Rect &r, TextColour colour)
 	GfxMainBlitter(GetGlyph(FS_NORMAL, c),
 		CenterBounds(r.left, r.right, GetCharacterWidth(FS_NORMAL, c)),
 		CenterBounds(r.top, r.bottom, GetCharacterHeight(FS_NORMAL)),
-		BM_COLOUR_REMAP);
+		BlitterMode::ColourRemap);
 }
 
 /**
@@ -957,10 +943,10 @@ Dimension GetSpriteSize(SpriteID sprid, Point *offset, ZoomLevel zoom)
 static BlitterMode GetBlitterMode(PaletteID pal)
 {
 	switch (pal) {
-		case PAL_NONE:          return BM_NORMAL;
-		case PALETTE_CRASH:     return BM_CRASH_REMAP;
-		case PALETTE_ALL_BLACK: return BM_BLACK_REMAP;
-		default:                return BM_COLOUR_REMAP;
+		case PAL_NONE:          return BlitterMode::Normal;
+		case PALETTE_CRASH:     return BlitterMode::CrashRemap;
+		case PALETTE_ALL_BLACK: return BlitterMode::BlackRemap;
+		default:                return BlitterMode::ColourRemap;
 	}
 }
 
@@ -978,7 +964,7 @@ void DrawSpriteViewport(SpriteID img, PaletteID pal, int x, int y, const SubSpri
 	if (HasBit(img, PALETTE_MODIFIER_TRANSPARENT)) {
 		pal = GB(pal, 0, PALETTE_WIDTH);
 		_colour_remap_ptr = GetNonSprite(pal, SpriteType::Recolour) + 1;
-		GfxMainBlitterViewport(GetSprite(real_sprite, SpriteType::Normal), x, y, pal == PALETTE_TO_TRANSPARENT ? BM_TRANSPARENT : BM_TRANSPARENT_REMAP, sub, real_sprite);
+		GfxMainBlitterViewport(GetSprite(real_sprite, SpriteType::Normal), x, y, pal == PALETTE_TO_TRANSPARENT ? BlitterMode::Transparent : BlitterMode::TransparentRemap, sub, real_sprite);
 	} else if (pal != PAL_NONE) {
 		if (HasBit(pal, PALETTE_TEXT_RECOLOUR)) {
 			SetColourRemap((TextColour)GB(pal, 0, PALETTE_WIDTH));
@@ -987,7 +973,7 @@ void DrawSpriteViewport(SpriteID img, PaletteID pal, int x, int y, const SubSpri
 		}
 		GfxMainBlitterViewport(GetSprite(real_sprite, SpriteType::Normal), x, y, GetBlitterMode(pal), sub, real_sprite);
 	} else {
-		GfxMainBlitterViewport(GetSprite(real_sprite, SpriteType::Normal), x, y, BM_NORMAL, sub, real_sprite);
+		GfxMainBlitterViewport(GetSprite(real_sprite, SpriteType::Normal), x, y, BlitterMode::Normal, sub, real_sprite);
 	}
 }
 
@@ -1006,7 +992,7 @@ void DrawSprite(SpriteID img, PaletteID pal, int x, int y, const SubSprite *sub,
 	if (HasBit(img, PALETTE_MODIFIER_TRANSPARENT)) {
 		pal = GB(pal, 0, PALETTE_WIDTH);
 		_colour_remap_ptr = GetNonSprite(pal, SpriteType::Recolour) + 1;
-		GfxMainBlitter(GetSprite(real_sprite, SpriteType::Normal), x, y, pal == PALETTE_TO_TRANSPARENT ? BM_TRANSPARENT : BM_TRANSPARENT_REMAP, sub, real_sprite, zoom);
+		GfxMainBlitter(GetSprite(real_sprite, SpriteType::Normal), x, y, pal == PALETTE_TO_TRANSPARENT ? BlitterMode::Transparent : BlitterMode::TransparentRemap, sub, real_sprite, zoom);
 	} else if (pal != PAL_NONE) {
 		if (HasBit(pal, PALETTE_TEXT_RECOLOUR)) {
 			SetColourRemap((TextColour)GB(pal, 0, PALETTE_WIDTH));
@@ -1015,7 +1001,7 @@ void DrawSprite(SpriteID img, PaletteID pal, int x, int y, const SubSprite *sub,
 		}
 		GfxMainBlitter(GetSprite(real_sprite, SpriteType::Normal), x, y, GetBlitterMode(pal), sub, real_sprite, zoom);
 	} else {
-		GfxMainBlitter(GetSprite(real_sprite, SpriteType::Normal), x, y, BM_NORMAL, sub, real_sprite, zoom);
+		GfxMainBlitter(GetSprite(real_sprite, SpriteType::Normal), x, y, BlitterMode::Normal, sub, real_sprite, zoom);
 	}
 }
 
@@ -1169,9 +1155,7 @@ std::unique_ptr<uint32_t[]> DrawSpriteToRgbaBuffer(SpriteID spriteId, ZoomLevel 
 	const Sprite *sprite = GetSprite(real_sprite, SpriteType::Normal);
 	Dimension dim = GetSpriteSize(real_sprite, nullptr, zoom);
 	size_t dim_size = static_cast<size_t>(dim.width) * dim.height;
-	std::unique_ptr<uint32_t[]> result(new uint32_t[dim_size]);
-	/* Set buffer to fully transparent. */
-	MemSetT(result.get(), 0, dim_size);
+	std::unique_ptr<uint32_t[]> result = std::make_unique<uint32_t[]>(dim_size);
 
 	/* Prepare new DrawPixelInfo - Normally this would be the screen but we want to draw to another buffer here.
 	 * Normally, pitch would be scaled screen width, but in our case our "screen" is only the sprite width wide. */
@@ -1187,23 +1171,21 @@ std::unique_ptr<uint32_t[]> DrawSpriteToRgbaBuffer(SpriteID spriteId, ZoomLevel 
 	dim_size = static_cast<size_t>(dim.width) * dim.height;
 
 	/* If the current blitter is a paletted blitter, we have to render to an extra buffer and resolve the palette later. */
-	std::unique_ptr<byte[]> pal_buffer{};
+	std::unique_ptr<uint8_t[]> pal_buffer{};
 	if (blitter->GetScreenDepth() == 8) {
-		pal_buffer.reset(new byte[dim_size]);
-		MemSetT(pal_buffer.get(), 0, dim_size);
-
+		pal_buffer = std::make_unique<uint8_t[]>(dim_size);
 		dpi.dst_ptr = pal_buffer.get();
 	}
 
 	/* Temporarily disable screen animations while blitting - This prevents 40bpp_anim from writing to the animation buffer. */
-	Backup<bool> disable_anim(_screen_disable_anim, true, FILE_LINE);
-	GfxBlitter<1, true>(sprite, 0, 0, BM_NORMAL, nullptr, real_sprite, zoom, &dpi);
+	Backup<bool> disable_anim(_screen_disable_anim, true);
+	GfxBlitter<1, true>(sprite, 0, 0, BlitterMode::Normal, nullptr, real_sprite, zoom, &dpi);
 	disable_anim.Restore();
 
 	if (blitter->GetScreenDepth() == 8) {
 		/* Resolve palette. */
 		uint32_t *dst = result.get();
-		const byte *src = pal_buffer.get();
+		const uint8_t *src = pal_buffer.get();
 		for (size_t i = 0; i < dim_size; ++i) {
 			*dst++ = _cur_palette.palette[*src++].data;
 		}
@@ -1214,7 +1196,7 @@ std::unique_ptr<uint32_t[]> DrawSpriteToRgbaBuffer(SpriteID spriteId, ZoomLevel 
 
 static void GfxMainBlitterViewport(const Sprite *sprite, int x, int y, BlitterMode mode, const SubSprite *sub, SpriteID sprite_id)
 {
-	GfxBlitter<ZOOM_LVL_BASE, false>(sprite, x, y, mode, sub, sprite_id, _cur_dpi->zoom);
+	GfxBlitter<ZOOM_BASE, false>(sprite, x, y, mode, sub, sprite_id, _cur_dpi->zoom);
 }
 
 static void GfxMainBlitter(const Sprite *sprite, int x, int y, BlitterMode mode, const SubSprite *sub, SpriteID sprite_id, ZoomLevel zoom)
@@ -1243,7 +1225,7 @@ void LoadStringWidthTable(bool monospace)
  * @param key   Character code glyph
  * @return Width of the character glyph
  */
-byte GetCharacterWidth(FontSize size, char32_t key)
+uint8_t GetCharacterWidth(FontSize size, char32_t key)
 {
 	/* Use _stringwidth_table cache if possible */
 	if (key >= 32 && key < 256) return _stringwidth_table[size][key - 32];
@@ -1256,9 +1238,9 @@ byte GetCharacterWidth(FontSize size, char32_t key)
  * @param size  Font of the digit
  * @return Width of the digit.
  */
-byte GetDigitWidth(FontSize size)
+uint8_t GetDigitWidth(FontSize size)
 {
-	byte width = 0;
+	uint8_t width = 0;
 	for (char c = '0'; c <= '9'; c++) {
 		width = std::max(GetCharacterWidth(size, c), width);
 	}
@@ -1267,27 +1249,32 @@ byte GetDigitWidth(FontSize size)
 
 /**
  * Determine the broadest digits for guessing the maximum width of a n-digit number.
- * @param[out] front Broadest digit, which is not 0. (Use this digit as first digit for numbers with more than one digit.)
- * @param[out] next Broadest digit, including 0. (Use this digit for all digits, except the first one; or for numbers with only one digit.)
- * @param size  Font of the digit
+ * @param size Font of the digit
+ * @returns Broadest digits, first which is not 0 (use this digit as first digit for numbers with more than one
+ *          digit.), second including 0 (use this digit for all digits, except the first one; or for numbers with
+ *          only one digit.)
  */
-void GetBroadestDigit(uint *front, uint *next, FontSize size)
+std::pair<uint8_t, uint8_t> GetBroadestDigit(FontSize size)
 {
+	uint8_t front = 0;
+	uint8_t next = 0;
 	int width = -1;
 	for (char c = '9'; c >= '0'; c--) {
 		int w = GetCharacterWidth(size, c);
-		if (w > width) {
-			width = w;
-			*next = c - '0';
-			if (c != '0') *front = c - '0';
-		}
+		if (w <= width) continue;
+
+		width = w;
+		next = c - '0';
+		if (c != '0') front = c - '0';
 	}
+	return {front, next};
 }
 
 void ScreenSizeChanged()
 {
-	_dirty_bytes_per_line = CeilDiv(_screen.width, DIRTY_BLOCK_WIDTH);
-	_dirty_blocks = ReallocT<byte>(_dirty_blocks, static_cast<size_t>(_dirty_bytes_per_line) * CeilDiv(_screen.height, DIRTY_BLOCK_HEIGHT));
+	_dirty_blocks_per_row = CeilDiv(_screen.width, DIRTY_BLOCK_WIDTH);
+	_dirty_blocks_per_column = CeilDiv(_screen.height, DIRTY_BLOCK_HEIGHT);
+	_dirty_blocks.resize(_dirty_blocks_per_column * _dirty_blocks_per_row);
 
 	/* check the dirty rect */
 	if (_invalid_rect.right >= _screen.width) _invalid_rect.right = _screen.width;
@@ -1367,8 +1354,8 @@ void DrawMouseCursor()
 
 	/* Draw cursor on screen */
 	_cur_dpi = &_screen;
-	for (uint i = 0; i < _cursor.sprite_count; ++i) {
-		DrawSprite(_cursor.sprite_seq[i].sprite, _cursor.sprite_seq[i].pal, _cursor.pos.x + _cursor.sprite_pos[i].x, _cursor.pos.y + _cursor.sprite_pos[i].y);
+	for (const auto &cs : _cursor.sprites) {
+		DrawSprite(cs.image.sprite, cs.image.pal, _cursor.pos.x + cs.pos.x, _cursor.pos.y + cs.pos.y);
 	}
 
 	VideoDriver::GetInstance()->MakeDirty(_cursor.draw_pos.x, _cursor.draw_pos.y, _cursor.draw_size.x, _cursor.draw_size.y);
@@ -1415,77 +1402,52 @@ void RedrawScreenRect(int left, int top, int right, int bottom)
  */
 void DrawDirtyBlocks()
 {
-	byte *b = _dirty_blocks;
-	const int w = Align(_screen.width,  DIRTY_BLOCK_WIDTH);
-	const int h = Align(_screen.height, DIRTY_BLOCK_HEIGHT);
-	int x;
-	int y;
+	auto is_dirty = [](auto block) -> bool { return block != 0; };
+	auto block = _dirty_blocks.begin();
 
-	y = 0;
-	do {
-		x = 0;
-		do {
-			if (*b != 0) {
-				int left;
-				int top;
-				int right = x + DIRTY_BLOCK_WIDTH;
-				int bottom = y;
-				byte *p = b;
-				int h2;
+	for (size_t x = 0; x < _dirty_blocks_per_row; ++x) {
+		auto last_of_column = block + _dirty_blocks_per_column;
+		for (size_t y = 0; y < _dirty_blocks_per_column; ++y, ++block) {
+			if (!is_dirty(*block)) continue;
 
-				/* First try coalescing downwards */
-				do {
-					*p = 0;
-					p += _dirty_bytes_per_line;
-					bottom += DIRTY_BLOCK_HEIGHT;
-				} while (bottom != h && *p != 0);
+			/* First try coalescing downwards */
+			size_t height = std::find_if_not(block + 1, last_of_column, is_dirty) - block;
+			size_t width = 1;
 
-				/* Try coalescing to the right too. */
-				h2 = (bottom - y) / DIRTY_BLOCK_HEIGHT;
-				assert(h2 > 0);
-				p = b;
+			/* Clear dirty state. */
+			std::fill_n(block, height, 0);
 
-				while (right != w) {
-					byte *p2 = ++p;
-					int i = h2;
-					/* Check if a full line of dirty flags is set. */
-					do {
-						if (!*p2) goto no_more_coalesc;
-						p2 += _dirty_bytes_per_line;
-					} while (--i != 0);
+			/* Try coalescing to the right too. */
+			auto block_right = block;
+			for (size_t x_right = x + 1; x_right < _dirty_blocks_per_row; ++x_right, ++width) {
+				block_right += _dirty_blocks_per_column;
+				auto last_right = block_right + height;
 
-					/* Wohoo, can combine it one step to the right!
-					 * Do that, and clear the bits. */
-					right += DIRTY_BLOCK_WIDTH;
+				if (std::find_if_not(block_right, last_right, is_dirty) != last_right) break;
 
-					i = h2;
-					p2 = p;
-					do {
-						*p2 = 0;
-						p2 += _dirty_bytes_per_line;
-					} while (--i != 0);
-				}
-				no_more_coalesc:
-
-				left = x;
-				top = y;
-
-				if (left   < _invalid_rect.left  ) left   = _invalid_rect.left;
-				if (top    < _invalid_rect.top   ) top    = _invalid_rect.top;
-				if (right  > _invalid_rect.right ) right  = _invalid_rect.right;
-				if (bottom > _invalid_rect.bottom) bottom = _invalid_rect.bottom;
-
-				if (left < right && top < bottom) {
-					RedrawScreenRect(left, top, right, bottom);
-				}
-
+				/* Clear dirty state. */
+				std::fill_n(block_right, height, 0);
 			}
-		} while (b++, (x += DIRTY_BLOCK_WIDTH) != w);
-	} while (b += -(int)(w / DIRTY_BLOCK_WIDTH) + _dirty_bytes_per_line, (y += DIRTY_BLOCK_HEIGHT) != h);
+
+			int left = static_cast<int>(x * DIRTY_BLOCK_WIDTH);
+			int top = static_cast<int>(y * DIRTY_BLOCK_HEIGHT);
+			int right = left + static_cast<int>(width * DIRTY_BLOCK_WIDTH);
+			int bottom = top + static_cast<int>(height * DIRTY_BLOCK_HEIGHT);
+
+			left = std::max(_invalid_rect.left, left);
+			top = std::max(_invalid_rect.top, top);
+			right = std::min(_invalid_rect.right, right);
+			bottom = std::min(_invalid_rect.bottom, bottom);
+
+			if (left < right && top < bottom) {
+				RedrawScreenRect(left, top, right, bottom);
+			}
+		}
+	}
 
 	++_dirty_block_colour;
-	_invalid_rect.left = w;
-	_invalid_rect.top = h;
+	_invalid_rect.left = _screen.width;
+	_invalid_rect.top = _screen.height;
 	_invalid_rect.right = 0;
 	_invalid_rect.bottom = 0;
 }
@@ -1504,10 +1466,6 @@ void DrawDirtyBlocks()
  */
 void AddDirtyBlock(int left, int top, int right, int bottom)
 {
-	byte *b;
-	int width;
-	int height;
-
 	if (left < 0) left = 0;
 	if (top < 0) top = 0;
 	if (right > _screen.width) right = _screen.width;
@@ -1515,28 +1473,22 @@ void AddDirtyBlock(int left, int top, int right, int bottom)
 
 	if (left >= right || top >= bottom) return;
 
-	if (left   < _invalid_rect.left  ) _invalid_rect.left   = left;
-	if (top    < _invalid_rect.top   ) _invalid_rect.top    = top;
-	if (right  > _invalid_rect.right ) _invalid_rect.right  = right;
-	if (bottom > _invalid_rect.bottom) _invalid_rect.bottom = bottom;
+	_invalid_rect.left = std::min(_invalid_rect.left, left);
+	_invalid_rect.top = std::min(_invalid_rect.top, top);
+	_invalid_rect.right = std::max(_invalid_rect.right, right);
+	_invalid_rect.bottom = std::max(_invalid_rect.bottom, bottom);
 
 	left /= DIRTY_BLOCK_WIDTH;
 	top  /= DIRTY_BLOCK_HEIGHT;
+	right = CeilDiv(right, DIRTY_BLOCK_WIDTH);
+	int height = CeilDiv(bottom, DIRTY_BLOCK_HEIGHT) - top;
 
-	b = _dirty_blocks + top * _dirty_bytes_per_line + left;
+	assert(left < right && height > 0);
 
-	width  = ((right  - 1) / DIRTY_BLOCK_WIDTH)  - left + 1;
-	height = ((bottom - 1) / DIRTY_BLOCK_HEIGHT) - top  + 1;
-
-	assert(width > 0 && height > 0);
-
-	do {
-		int i = width;
-
-		do b[--i] = 0xFF; while (i != 0);
-
-		b += _dirty_bytes_per_line;
-	} while (--height != 0);
+	for (; left < right; ++left) {
+		size_t offset = _dirty_blocks_per_column * left + top;
+		std::fill_n(_dirty_blocks.begin() + offset, height, 0xFF);
+	}
 }
 
 /**
@@ -1569,7 +1521,7 @@ bool FillDrawPixelInfo(DrawPixelInfo *n, int left, int top, int width, int heigh
 	Blitter *blitter = BlitterFactory::GetCurrentBlitter();
 	const DrawPixelInfo *o = _cur_dpi;
 
-	n->zoom = ZOOM_LVL_NORMAL;
+	n->zoom = ZOOM_LVL_MIN;
 
 	assert(width > 0);
 	assert(height > 0);
@@ -1619,20 +1571,22 @@ void UpdateCursorSize()
 	/* Ignore setting any cursor before the sprites are loaded. */
 	if (GetMaxSpriteID() == 0) return;
 
-	static_assert(lengthof(_cursor.sprite_seq) == lengthof(_cursor.sprite_pos));
-	assert(_cursor.sprite_count <= lengthof(_cursor.sprite_seq));
-	for (uint i = 0; i < _cursor.sprite_count; ++i) {
-		const Sprite *p = GetSprite(GB(_cursor.sprite_seq[i].sprite, 0, SPRITE_WIDTH), SpriteType::Normal);
+	bool first = true;
+	for (const auto &cs : _cursor.sprites) {
+		const Sprite *p = GetSprite(GB(cs.image.sprite, 0, SPRITE_WIDTH), SpriteType::Normal);
 		Point offs, size;
-		offs.x = UnScaleGUI(p->x_offs) + _cursor.sprite_pos[i].x;
-		offs.y = UnScaleGUI(p->y_offs) + _cursor.sprite_pos[i].y;
+		offs.x = UnScaleGUI(p->x_offs) + cs.pos.x;
+		offs.y = UnScaleGUI(p->y_offs) + cs.pos.y;
 		size.x = UnScaleGUI(p->width);
 		size.y = UnScaleGUI(p->height);
 
-		if (i == 0) {
+		if (first) {
+			/* First sprite sets the total. */
 			_cursor.total_offs = offs;
 			_cursor.total_size = size;
+			first = false;
 		} else {
+			/* Additional sprites expand the total. */
 			int right  = std::max(_cursor.total_offs.x + _cursor.total_size.x, offs.x + size.x);
 			int bottom = std::max(_cursor.total_offs.y + _cursor.total_size.y, offs.y + size.y);
 			if (offs.x < _cursor.total_offs.x) _cursor.total_offs.x = offs.x;
@@ -1652,13 +1606,10 @@ void UpdateCursorSize()
  */
 static void SetCursorSprite(CursorID cursor, PaletteID pal)
 {
-	if (_cursor.sprite_count == 1 && _cursor.sprite_seq[0].sprite == cursor && _cursor.sprite_seq[0].pal == pal) return;
+	if (_cursor.sprites.size() == 1 && _cursor.sprites[0].image.sprite == cursor && _cursor.sprites[0].image.pal == pal) return;
 
-	_cursor.sprite_count = 1;
-	_cursor.sprite_seq[0].sprite = cursor;
-	_cursor.sprite_seq[0].pal = pal;
-	_cursor.sprite_pos[0].x = 0;
-	_cursor.sprite_pos[0].y = 0;
+	_cursor.sprites.clear();
+	_cursor.sprites.emplace_back(cursor, pal, 0, 0);
 
 	UpdateCursorSize();
 }
@@ -1669,7 +1620,8 @@ static void SwitchAnimatedCursor()
 
 	if (cur == nullptr || cur->sprite == AnimCursor::LAST) cur = _cursor.animate_list;
 
-	SetCursorSprite(cur->sprite, _cursor.sprite_seq[0].pal);
+	assert(!_cursor.sprites.empty());
+	SetCursorSprite(cur->sprite, _cursor.sprites[0].image.pal);
 
 	_cursor.animate_timeout = cur->display_time;
 	_cursor.animate_cur     = cur + 1;
@@ -1688,10 +1640,11 @@ void CursorTick()
  */
 void SetMouseCursorBusy(bool busy)
 {
+	assert(!_cursor.sprites.empty());
 	if (busy) {
-		if (_cursor.sprite_seq[0].sprite == SPR_CURSOR_MOUSE) SetMouseCursor(SPR_CURSOR_ZZZ, PAL_NONE);
+		if (_cursor.sprites[0].image.sprite == SPR_CURSOR_MOUSE) SetMouseCursor(SPR_CURSOR_ZZZ, PAL_NONE);
 	} else {
-		if (_cursor.sprite_seq[0].sprite == SPR_CURSOR_ZZZ) SetMouseCursor(SPR_CURSOR_MOUSE, PAL_NONE);
+		if (_cursor.sprites[0].image.sprite == SPR_CURSOR_ZZZ) SetMouseCursor(SPR_CURSOR_MOUSE, PAL_NONE);
 	}
 }
 
@@ -1716,9 +1669,10 @@ void SetMouseCursor(CursorID sprite, PaletteID pal)
  */
 void SetAnimatedMouseCursor(const AnimCursor *table)
 {
+	assert(!_cursor.sprites.empty());
 	_cursor.animate_list = table;
 	_cursor.animate_cur = nullptr;
-	_cursor.sprite_seq[0].pal = PAL_NONE;
+	_cursor.sprites[0].image.pal = PAL_NONE;
 	SwitchAnimatedCursor();
 }
 
@@ -1793,7 +1747,7 @@ void UpdateGUIZoom()
 		_gui_scale = Clamp(_gui_scale_cfg, MIN_INTERFACE_SCALE, MAX_INTERFACE_SCALE);
 	}
 
-	int8_t new_zoom = ScaleGUITrad(1) <= 1 ? ZOOM_LVL_OUT_4X : ScaleGUITrad(1) >= 4 ? ZOOM_LVL_MIN : ZOOM_LVL_OUT_2X;
+	int8_t new_zoom = ScaleGUITrad(1) <= 1 ? ZOOM_LVL_NORMAL : ScaleGUITrad(1) >= 4 ? ZOOM_LVL_IN_4X : ZOOM_LVL_IN_2X;
 	/* Font glyphs should not be clamped to min/max zoom. */
 	_font_zoom = static_cast<ZoomLevel>(new_zoom);
 	/* Ensure the gui_zoom is clamped between min/max. */
@@ -1803,7 +1757,7 @@ void UpdateGUIZoom()
 
 /**
  * Resolve GUI zoom level and adjust GUI to new zoom, if auto-suggestion is requested.
- * @param automatic Set if the change is occuring due to OS DPI scaling being changed.
+ * @param automatic Set if the change is occurring due to OS DPI scaling being changed.
  * @returns true when the zoom level has changed, caller must call ReInitAllWindows(true)
  * after resizing the application's window/buffer.
  */

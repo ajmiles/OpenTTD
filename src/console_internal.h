@@ -16,7 +16,7 @@ static const uint ICON_CMDLN_SIZE     = 1024; ///< maximum length of a typed in 
 static const uint ICON_MAX_STREAMSIZE = 2048; ///< maximum length of a totally expanded command
 
 /** Return values of console hooks (#IConsoleHook). */
-enum ConsoleHookResult {
+enum ConsoleHookResult : uint8_t {
 	CHR_ALLOW,    ///< Allow command execution.
 	CHR_DISALLOW, ///< Disallow command execution.
 	CHR_HIDE,     ///< Hide the existence of the command.
@@ -30,7 +30,7 @@ enum ConsoleHookResult {
  * If you want to handle multiple words as one, enclose them in double-quotes
  * eg. 'say "hello everybody"'
  */
-typedef bool IConsoleCmdProc(byte argc, char *argv[]);
+typedef bool IConsoleCmdProc(uint8_t argc, char *argv[]);
 typedef ConsoleHookResult IConsoleHook(bool echo);
 struct IConsoleCmd {
 	IConsoleCmd(const std::string &name, IConsoleCmdProc *proc, IConsoleHook *hook) : name(name), proc(proc), hook(hook) {}

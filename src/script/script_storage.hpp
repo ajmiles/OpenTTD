@@ -17,6 +17,7 @@
 #include "../goal_type.h"
 #include "../story_type.h"
 
+#include "script_types.hpp"
 #include "script_log_types.hpp"
 
 #include "table/strings.h"
@@ -41,7 +42,6 @@ private:
 	class ScriptObject *mode_instance; ///< The instance belonging to the current build mode.
 	ScriptAsyncModeProc *async_mode;         ///< The current command async mode we are in.
 	class ScriptObject *async_mode_instance; ///< The instance belonging to the current command async mode.
-	bool time_mode;                          ///< True if we in calendar time mode, or false (default) if we are in economy time mode.
 	CompanyID root_company;          ///< The root company, the company that the script really belongs to.
 	CompanyID company;               ///< The current company.
 
@@ -50,7 +50,7 @@ private:
 
 	CommandCost costs;               ///< The costs the script is tracking.
 	Money last_cost;                 ///< The last cost of the command.
-	uint last_error;                 ///< The last error of the command.
+	ScriptErrorType last_error{}; ///< The last error of the command.
 	bool last_command_res;           ///< The last result of the command.
 
 	CommandDataBuffer last_data;     ///< The last data passed to a command.
@@ -71,14 +71,12 @@ public:
 		mode_instance     (nullptr),
 		async_mode        (nullptr),
 		async_mode_instance (nullptr),
-		time_mode         (false),
 		root_company      (INVALID_OWNER),
 		company           (INVALID_OWNER),
 		delay             (1),
 		allow_do_command  (true),
 		/* costs (can't be set) */
 		last_cost         (0),
-		last_error        (STR_NULL),
 		last_command_res  (true),
 		last_cmd          (CMD_END),
 		/* calback_value (can't be set) */

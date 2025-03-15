@@ -16,16 +16,6 @@
 
 #include "../../safeguards.h"
 
-/**
- * Construct a socket handler for a TCP connection.
- * @param s The just opened TCP connection.
- */
-NetworkTCPSocketHandler::NetworkTCPSocketHandler(SOCKET s) :
-		NetworkSocketHandler(),
-		sock(s), writable(false)
-{
-}
-
 NetworkTCPSocketHandler::~NetworkTCPSocketHandler()
 {
 	this->CloseSocket();
@@ -188,7 +178,11 @@ std::unique_ptr<Packet> NetworkTCPSocketHandler::ReceivePacket()
 		}
 	}
 
-	p.PrepareToRead();
+	if (!p.PrepareToRead()) {
+		Debug(net, 0, "Invalid packet received (too small / decryption error)");
+		this->CloseConnection();
+		return nullptr;
+	}
 	return std::move(this->packet_recv);
 }
 

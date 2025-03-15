@@ -20,21 +20,21 @@
 /* XXX: Below 3 tables store duplicate data. Maybe remove some? */
 /* Maps a trackdir to the bit that stores its status in the map arrays, in the
  * direction along with the trackdir */
-extern const byte _signal_along_trackdir[TRACKDIR_END] = {
+extern const uint8_t _signal_along_trackdir[TRACKDIR_END] = {
 	0x8, 0x8, 0x8, 0x2, 0x4, 0x1, 0, 0,
 	0x4, 0x4, 0x4, 0x1, 0x8, 0x2
 };
 
 /* Maps a trackdir to the bit that stores its status in the map arrays, in the
  * direction against the trackdir */
-extern const byte _signal_against_trackdir[TRACKDIR_END] = {
+extern const uint8_t _signal_against_trackdir[TRACKDIR_END] = {
 	0x4, 0x4, 0x4, 0x1, 0x8, 0x2, 0, 0,
 	0x8, 0x8, 0x8, 0x2, 0x4, 0x1
 };
 
 /* Maps a Track to the bits that store the status of the two signals that can
  * be present on the given track */
-extern const byte _signal_on_track[] = {
+extern const uint8_t _signal_on_track[] = {
 	0xC, 0xC, 0xC, 0x3, 0xC, 0x3
 };
 
@@ -255,8 +255,8 @@ RailTypes GetCompanyRailTypes(CompanyID company, bool introduces)
 	for (const Engine *e : Engine::IterateType(VEH_TRAIN)) {
 		const EngineInfo *ei = &e->info;
 
-		if (HasBit(ei->climates, _settings_game.game_creation.landscape) &&
-				(HasBit(e->company_avail, company) || TimerGameCalendar::date >= e->intro_date + CalendarTime::DAYS_IN_YEAR)) {
+		if (ei->climates.Test(_settings_game.game_creation.landscape) &&
+				(e->company_avail.Test(company) || TimerGameCalendar::date >= e->intro_date + CalendarTime::DAYS_IN_YEAR)) {
 			const RailVehicleInfo *rvi = &e->u.rail;
 
 			if (rvi->railveh_type != RAILVEH_WAGON) {
@@ -285,7 +285,7 @@ RailTypes GetRailTypes(bool introduces)
 
 	for (const Engine *e : Engine::IterateType(VEH_TRAIN)) {
 		const EngineInfo *ei = &e->info;
-		if (!HasBit(ei->climates, _settings_game.game_creation.landscape)) continue;
+		if (!ei->climates.Test(_settings_game.game_creation.landscape)) continue;
 
 		const RailVehicleInfo *rvi = &e->u.rail;
 		if (rvi->railveh_type != RAILVEH_WAGON) {
@@ -310,6 +310,8 @@ RailTypes GetRailTypes(bool introduces)
  */
 RailType GetRailTypeByLabel(RailTypeLabel label, bool allow_alternate_labels)
 {
+	if (label == 0) return INVALID_RAILTYPE;
+
 	/* Loop through each rail type until the label is found */
 	for (RailType r = RAILTYPE_BEGIN; r != RAILTYPE_END; r++) {
 		const RailTypeInfo *rti = GetRailTypeInfo(r);
@@ -320,7 +322,7 @@ RailType GetRailTypeByLabel(RailTypeLabel label, bool allow_alternate_labels)
 		/* Test if any rail type defines the label as an alternate. */
 		for (RailType r = RAILTYPE_BEGIN; r != RAILTYPE_END; r++) {
 			const RailTypeInfo *rti = GetRailTypeInfo(r);
-			if (std::find(rti->alternate_labels.begin(), rti->alternate_labels.end(), label) != rti->alternate_labels.end()) return r;
+			if (std::ranges::find(rti->alternate_labels, label) != rti->alternate_labels.end()) return r;
 		}
 	}
 

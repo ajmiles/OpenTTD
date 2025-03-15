@@ -21,7 +21,7 @@
 struct RoadVehicle;
 
 /** Road vehicle states */
-enum RoadVehicleStates {
+enum RoadVehicleStates : uint8_t {
 	/*
 	 * Lower 4 bits are used for vehicle track direction. (Trackdirs)
 	 * When in a road stop (bit 5 or bit 6 set) these bits give the
@@ -76,47 +76,38 @@ static const uint RVC_DRIVE_THROUGH_STOP_FRAME           = 11;
 static const uint RVC_DEPOT_STOP_FRAME                   = 11;
 
 /** The number of ticks a vehicle has for overtaking. */
-static const byte RV_OVERTAKE_TIMEOUT = 35;
+static const uint8_t RV_OVERTAKE_TIMEOUT = 35;
 
 void RoadVehUpdateCache(RoadVehicle *v, bool same_length = false);
 void GetRoadVehSpriteSize(EngineID engine, uint &width, uint &height, int &xoffs, int &yoffs, EngineImageType image_type);
 
-struct RoadVehPathCache {
-	std::deque<Trackdir> td;
-	std::deque<TileIndex> tile;
+/** Element of the RoadVehPathCache. */
+struct RoadVehPathElement {
+	Trackdir trackdir = INVALID_TRACKDIR; ///< Trackdir for this element.
+	TileIndex tile = INVALID_TILE; ///< Tile for this element.
 
-	inline bool empty() const { return this->td.empty(); }
-
-	inline size_t size() const
-	{
-		assert(this->td.size() == this->tile.size());
-		return this->td.size();
-	}
-
-	inline void clear()
-	{
-		this->td.clear();
-		this->tile.clear();
-	}
+	constexpr RoadVehPathElement() {}
+	constexpr RoadVehPathElement(Trackdir trackdir, TileIndex tile) : trackdir(trackdir), tile(tile) {}
 };
+
+using RoadVehPathCache = std::vector<RoadVehPathElement>;
 
 /**
  * Buses, trucks and trams belong to this class.
  */
 struct RoadVehicle final : public GroundVehicle<RoadVehicle, VEH_ROAD> {
-	RoadVehPathCache path;  ///< Cached path.
-	byte state;             ///< @see RoadVehicleStates
-	byte frame;
-	uint16_t blocked_ctr;
-	byte overtaking;        ///< Set to #RVSB_DRIVE_SIDE when overtaking, otherwise 0.
-	byte overtaking_ctr;    ///< The length of the current overtake attempt.
-	uint16_t crashed_ctr;     ///< Animation counter when the vehicle has crashed. @see RoadVehIsCrashed
-	byte reverse_ctr;
+	RoadVehPathCache path{};  ///< Cached path.
+	uint8_t state = 0; ///< @see RoadVehicleStates
+	uint8_t frame = 0;
+	uint16_t blocked_ctr = 0;
+	uint8_t overtaking = 0; ///< Set to #RVSB_DRIVE_SIDE when overtaking, otherwise 0.
+	uint8_t overtaking_ctr = 0; ///< The length of the current overtake attempt.
+	uint16_t crashed_ctr = 0; ///< Animation counter when the vehicle has crashed. @see RoadVehIsCrashed
+	uint8_t reverse_ctr = 0;
 
-	RoadType roadtype;              //!< Roadtype of this vehicle.
-	RoadTypes compatible_roadtypes; //!< Roadtypes this consist is powered on.
-
-	VehicleID disaster_vehicle = INVALID_VEHICLE; ///< NOSAVE: Disaster vehicle targetting this vehicle.
+	RoadType roadtype = INVALID_ROADTYPE; ///< NOSAVE: Roadtype of this vehicle.
+	VehicleID disaster_vehicle = VehicleID::Invalid(); ///< NOSAVE: Disaster vehicle targetting this vehicle.
+	RoadTypes compatible_roadtypes{}; ///< NOSAVE: Roadtypes this consist is powered on.
 
 	/** We don't want GCC to zero our struct! It already is zeroed and has an index! */
 	RoadVehicle() : GroundVehicleBase() {}
@@ -201,7 +192,7 @@ protected: // These functions should not be called outside acceleration code.
 	 * Allows to know the tractive effort value that this vehicle will use.
 	 * @return Tractive effort value from the engine.
 	 */
-	inline byte GetTractiveEffort() const
+	inline uint8_t GetTractiveEffort() const
 	{
 		/* The tractive effort coefficient is in units of 1/256.  */
 		return GetVehicleProperty(this, PROP_ROADVEH_TRACTIVE_EFFORT, RoadVehInfo(this->engine_type)->tractive_effort);
@@ -211,7 +202,7 @@ protected: // These functions should not be called outside acceleration code.
 	 * Gets the area used for calculating air drag.
 	 * @return Area of the engine in m^2.
 	 */
-	inline byte GetAirDragArea() const
+	inline uint8_t GetAirDragArea() const
 	{
 		return 6;
 	}
@@ -220,7 +211,7 @@ protected: // These functions should not be called outside acceleration code.
 	 * Gets the air drag coefficient of this vehicle.
 	 * @return Air drag value from the engine.
 	 */
-	inline byte GetAirDrag() const
+	inline uint8_t GetAirDrag() const
 	{
 		return RoadVehInfo(this->engine_type)->air_drag;
 	}
@@ -231,7 +222,7 @@ protected: // These functions should not be called outside acceleration code.
 	 */
 	inline AccelStatus GetAccelerationStatus() const
 	{
-		return (this->vehstatus & VS_STOPPED) ? AS_BRAKE : AS_ACCEL;
+		return this->vehstatus.Test(VehState::Stopped) ? AS_BRAKE : AS_ACCEL;
 	}
 
 	/**

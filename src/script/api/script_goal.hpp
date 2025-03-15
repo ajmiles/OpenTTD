@@ -25,18 +25,12 @@
  */
 class ScriptGoal : public ScriptObject {
 public:
-	/**
-	 * The goal IDs.
-	 */
-	enum GoalID : uint16_t {
-		/* Note: these values represent part of the in-game GoalID enum */
-		GOAL_INVALID = ::INVALID_GOAL, ///< An invalid goal id.
-	};
+	static constexpr GoalID GOAL_INVALID = ::GoalID::Invalid(); ///< An invalid goal id.
 
 	/**
 	 * Goal types that can be given to a goal.
 	 */
-	enum GoalType : byte {
+	enum GoalType : uint8_t {
 		/* Note: these values represent part of the in-game GoalType enum */
 		GT_NONE     = ::GT_NONE,     ///< Destination is not linked.
 		GT_TILE     = ::GT_TILE,     ///< Destination is a tile.

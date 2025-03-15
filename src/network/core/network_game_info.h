@@ -17,6 +17,7 @@
 #include "../../newgrf_config.h"
 #include "../../timer/timer_game_calendar.h"
 #include "../../timer/timer_game_tick.h"
+#include "../../landscape_type.h"
 
 #include <unordered_map>
 
@@ -94,7 +95,7 @@ enum NewGRFSerializationType {
  * The game information that is sent from the server to the client.
  */
 struct NetworkServerGameInfo {
-	GRFConfig *grfconfig;        ///< List of NewGRF files used
+	GRFConfigList grfconfig; ///< List of NewGRF files used
 	TimerGameCalendar::Date calendar_start; ///< When the game started.
 	TimerGameCalendar::Date calendar_date; ///< Current calendar date.
 	TimerGameTick::TickCounter ticks_playing; ///< Amount of ticks the game has been running unpaused.
@@ -104,12 +105,12 @@ struct NetworkServerGameInfo {
 	std::string server_revision; ///< The version number the server is using (e.g.: 'r304' or 0.5.0)
 	bool dedicated;              ///< Is this a dedicated server?
 	bool use_password;           ///< Is this server passworded?
-	byte clients_on;             ///< Current count of clients on server
-	byte clients_max;            ///< Max clients allowed on server
-	byte companies_on;           ///< How many started companies do we have
-	byte companies_max;          ///< Max companies allowed on server
-	byte spectators_on;          ///< How many spectators do we have?
-	byte landscape;              ///< The used landscape
+	uint8_t clients_on;             ///< Current count of clients on server
+	uint8_t clients_max;            ///< Max clients allowed on server
+	uint8_t companies_on;           ///< How many started companies do we have
+	uint8_t companies_max;          ///< Max companies allowed on server
+	uint8_t spectators_on;          ///< How many spectators do we have?
+	LandscapeType landscape;              ///< The used landscape
 	int gamescript_version;      ///< Version of the gamescript.
 	std::string gamescript_name; ///< Name of the gamescript.
 };

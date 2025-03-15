@@ -19,7 +19,7 @@
  * They all are pointing toward array _industry_draw_tile_data, in table/industry_land.h
  * How to calculate the correct position ? GFXid << 2 | IndustryStage (0 to 3)
  */
-enum IndustryGraphics {
+enum IndustryGraphics : uint8_t {
 	GFX_COAL_MINE_TOWER_NOT_ANIMATED   =   0,
 	GFX_COAL_MINE_TOWER_ANIMATED       =   1,
 	GFX_POWERPLANT_CHIMNEY             =   8,
@@ -63,7 +63,7 @@ enum IndustryGraphics {
 inline IndustryID GetIndustryIndex(Tile t)
 {
 	assert(IsTileType(t, MP_INDUSTRY));
-	return t.m2();
+	return static_cast<IndustryID>(t.m2());
 }
 
 /**
@@ -88,7 +88,7 @@ IndustryType GetIndustryType(Tile tile);
 inline void SetIndustryCompleted(Tile tile)
 {
 	assert(IsTileType(tile, MP_INDUSTRY));
-	SB(tile.m1(), 7, 1, 1);
+	SetBit(tile.m1(), 7);
 }
 
 /**
@@ -97,10 +97,10 @@ inline void SetIndustryCompleted(Tile tile)
  * @pre IsTileType(tile, MP_INDUSTRY)
  * @return the construction stage
  */
-inline byte GetIndustryConstructionStage(Tile tile)
+inline uint8_t GetIndustryConstructionStage(Tile tile)
 {
 	assert(IsTileType(tile, MP_INDUSTRY));
-	return IsIndustryCompleted(tile) ? (byte)INDUSTRY_COMPLETED : GB(tile.m1(), 0, 2);
+	return IsIndustryCompleted(tile) ? (uint8_t)INDUSTRY_COMPLETED : GB(tile.m1(), 0, 2);
 }
 
 /**
@@ -109,7 +109,7 @@ inline byte GetIndustryConstructionStage(Tile tile)
  * @param value the new construction stage
  * @pre IsTileType(tile, MP_INDUSTRY)
  */
-inline void SetIndustryConstructionStage(Tile tile, byte value)
+inline void SetIndustryConstructionStage(Tile tile, uint8_t value)
 {
 	assert(IsTileType(tile, MP_INDUSTRY));
 	SB(tile.m1(), 0, 2, value);
@@ -159,7 +159,7 @@ inline void SetIndustryGfx(Tile t, IndustryGfx gfx)
  * @pre IsTileType(tile, MP_INDUSTRY)
  * @return the construction counter
  */
-inline byte GetIndustryConstructionCounter(Tile tile)
+inline uint8_t GetIndustryConstructionCounter(Tile tile)
 {
 	assert(IsTileType(tile, MP_INDUSTRY));
 	return GB(tile.m1(), 2, 2);
@@ -171,7 +171,7 @@ inline byte GetIndustryConstructionCounter(Tile tile)
  * @param value the new value for the construction counter
  * @pre IsTileType(tile, MP_INDUSTRY)
  */
-inline void SetIndustryConstructionCounter(Tile tile, byte value)
+inline void SetIndustryConstructionCounter(Tile tile, uint8_t value)
 {
 	assert(IsTileType(tile, MP_INDUSTRY));
 	SB(tile.m1(), 2, 2, value);
@@ -180,7 +180,7 @@ inline void SetIndustryConstructionCounter(Tile tile, byte value)
 /**
  * Reset the construction stage counter of the industry,
  * as well as the completion bit.
- * In fact, it is the same as restarting construction frmo ground up
+ * In fact, it is the same as restarting construction from the ground up.
  * @param tile the tile to query
  * @pre IsTileType(tile, MP_INDUSTRY)
  */
@@ -196,7 +196,7 @@ inline void ResetIndustryConstructionStage(Tile tile)
  * @param tile the tile to get the animation loop number of
  * @pre IsTileType(tile, MP_INDUSTRY)
  */
-inline byte GetIndustryAnimationLoop(Tile tile)
+inline uint8_t GetIndustryAnimationLoop(Tile tile)
 {
 	assert(IsTileType(tile, MP_INDUSTRY));
 	return tile.m4();
@@ -208,7 +208,7 @@ inline byte GetIndustryAnimationLoop(Tile tile)
  * @param count the new animation frame number
  * @pre IsTileType(tile, MP_INDUSTRY)
  */
-inline void SetIndustryAnimationLoop(Tile tile, byte count)
+inline void SetIndustryAnimationLoop(Tile tile, uint8_t count)
 {
 	assert(IsTileType(tile, MP_INDUSTRY));
 	tile.m4() = count;
@@ -221,7 +221,7 @@ inline void SetIndustryAnimationLoop(Tile tile, byte count)
  * @pre IsTileType(tile, MP_INDUSTRY)
  * @return requested bits
  */
-inline byte GetIndustryRandomBits(Tile tile)
+inline uint8_t GetIndustryRandomBits(Tile tile)
 {
 	assert(IsTileType(tile, MP_INDUSTRY));
 	return tile.m3();
@@ -234,7 +234,7 @@ inline byte GetIndustryRandomBits(Tile tile)
  * @param bits the random bits
  * @pre IsTileType(tile, MP_INDUSTRY)
  */
-inline void SetIndustryRandomBits(Tile tile, byte bits)
+inline void SetIndustryRandomBits(Tile tile, uint8_t bits)
 {
 	assert(IsTileType(tile, MP_INDUSTRY));
 	tile.m3() = bits;
@@ -247,7 +247,7 @@ inline void SetIndustryRandomBits(Tile tile, byte bits)
  * @pre IsTileType(tile, MP_INDUSTRY)
  * @return requested triggers
  */
-inline byte GetIndustryTriggers(Tile tile)
+inline uint8_t GetIndustryTriggers(Tile tile)
 {
 	assert(IsTileType(tile, MP_INDUSTRY));
 	return GB(tile.m6(), 3, 3);
@@ -261,7 +261,7 @@ inline byte GetIndustryTriggers(Tile tile)
  * @param triggers the triggers to set
  * @pre IsTileType(tile, MP_INDUSTRY)
  */
-inline void SetIndustryTriggers(Tile tile, byte triggers)
+inline void SetIndustryTriggers(Tile tile, uint8_t triggers)
 {
 	assert(IsTileType(tile, MP_INDUSTRY));
 	SB(tile.m6(), 3, 3, triggers);
@@ -279,7 +279,7 @@ inline void MakeIndustry(Tile t, IndustryID index, IndustryGfx gfx, uint8_t rand
 {
 	SetTileType(t, MP_INDUSTRY);
 	t.m1() = 0;
-	t.m2() = index;
+	t.m2() = index.base();
 	SetIndustryRandomBits(t, random); // m3
 	t.m4() = 0;
 	SetIndustryGfx(t, gfx); // m5, part of m6

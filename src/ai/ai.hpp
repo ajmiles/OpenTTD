@@ -27,9 +27,8 @@ public:
 	/**
 	 * Start a new AI company.
 	 * @param company At which slot the AI company should start.
-	 * @param deviate Whether to apply random deviation to the configured AI.
 	 */
-	static void StartNew(CompanyID company, bool deviate = true);
+	static void StartNew(CompanyID company);
 
 	/**
 	 * Called every game-tick to let AIs do something.
@@ -104,7 +103,7 @@ public:
 	/**
 	 * Broadcast a new event to all active AIs.
 	 */
-	static void BroadcastNewEvent(ScriptEvent *event, CompanyID skip_company = MAX_COMPANIES);
+	static void BroadcastNewEvent(ScriptEvent *event, CompanyID skip_company = CompanyID::Invalid());
 
 	/**
 	 * Save data from an AI to a savegame.

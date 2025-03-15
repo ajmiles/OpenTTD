@@ -39,16 +39,16 @@ struct LangString {
 
 /** Information about the currently known strings. */
 struct StringData {
-	std::vector<std::unique_ptr<LangString>> strings; ///< List of all known strings.
-	std::unordered_map<std::string_view, LangString *> name_to_string; ///< Lookup table for the strings.
+	std::vector<std::shared_ptr<LangString>> strings; ///< List of all known strings.
+	std::unordered_map<std::string, std::shared_ptr<LangString>> name_to_string; ///< Lookup table for the strings.
 	size_t tabs;          ///< The number of 'tabs' of strings.
 	size_t max_strings;   ///< The maximum number of strings.
 	size_t next_string_id;///< The next string ID to allocate.
 
 	StringData(size_t tabs);
 	void FreeTranslation();
-	void Add(std::unique_ptr<LangString> ls);
-	LangString *Find(const std::string_view s);
+	void Add(std::shared_ptr<LangString> ls);
+	LangString *Find(const std::string &s);
 	uint VersionHashStr(uint hash, const char *s) const;
 	uint Version() const;
 	uint CountInUse(uint tab) const;
@@ -62,7 +62,7 @@ struct StringReader {
 	bool translation; ///< Are we reading a translation, implies !master. However, the base translation will have this false.
 
 	StringReader(StringData &data, const std::string &file, bool master, bool translation);
-	virtual ~StringReader() {}
+	virtual ~StringReader() = default;
 	void HandleString(char *str);
 
 	/**
@@ -118,7 +118,7 @@ struct LanguageWriter {
 	 * @param buffer The buffer to write.
 	 * @param length The amount of byte to write.
 	 */
-	virtual void Write(const byte *buffer, size_t length) = 0;
+	virtual void Write(const uint8_t *buffer, size_t length) = 0;
 
 	/**
 	 * Finalise writing the file.
@@ -150,9 +150,9 @@ ParsedCommandStruct ExtractCommandString(const char *s, bool warnings);
 void StrgenWarningI(const std::string &msg);
 void StrgenErrorI(const std::string &msg);
 [[noreturn]] void StrgenFatalI(const std::string &msg);
-#define StrgenWarning(format_string, ...) StrgenWarningI(fmt::format(FMT_STRING(format_string), ## __VA_ARGS__))
-#define StrgenError(format_string, ...) StrgenErrorI(fmt::format(FMT_STRING(format_string), ## __VA_ARGS__))
-#define StrgenFatal(format_string, ...) StrgenFatalI(fmt::format(FMT_STRING(format_string), ## __VA_ARGS__))
+#define StrgenWarning(format_string, ...) StrgenWarningI(fmt::format(FMT_STRING(format_string) __VA_OPT__(,) __VA_ARGS__))
+#define StrgenError(format_string, ...) StrgenErrorI(fmt::format(FMT_STRING(format_string) __VA_OPT__(,) __VA_ARGS__))
+#define StrgenFatal(format_string, ...) StrgenFatalI(fmt::format(FMT_STRING(format_string) __VA_OPT__(,) __VA_ARGS__))
 char *ParseWord(char **buf);
 
 extern const char *_file;

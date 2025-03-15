@@ -50,7 +50,7 @@ void GameInstance::RegisterAPI()
 
 	RegisterGameTranslation(this->engine);
 
-	if (!this->LoadCompatibilityScripts(this->versionAPI, GAME_DIR)) this->Died();
+	if (!this->LoadCompatibilityScripts(GAME_DIR, GameInfo::ApiVersions)) this->Died();
 }
 
 int GameInstance::GetSetting(const std::string &name)
@@ -74,7 +74,7 @@ void GameInstance::Died()
 
 	const GameInfo *info = Game::GetInfo();
 	if (info != nullptr) {
-		ShowErrorMessage(STR_ERROR_AI_PLEASE_REPORT_CRASH, INVALID_STRING_ID, WL_WARNING);
+		ShowErrorMessage(GetEncodedString(STR_ERROR_AI_PLEASE_REPORT_CRASH), {}, WL_WARNING);
 
 		if (!info->GetURL().empty()) {
 			ScriptLog::Info("Please report the error to the following URL:");

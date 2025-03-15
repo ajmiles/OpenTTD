@@ -9,6 +9,7 @@
 
 #include "stdafx.h"
 #include "train.h"
+#include "vehicle_func.h"
 #include "vehiclelist.h"
 #include "vehiclelist_func.h"
 #include "group.h"
@@ -16,12 +17,12 @@
 #include "safeguards.h"
 
 /**
- * Pack a VehicleListIdentifier in a single uint32.
- * @return The packed identifier.
+ * Pack a VehicleListIdentifier in 32 bits so it can be used as unique WindowNumber.
+ * @return The window number.
  */
-uint32_t VehicleListIdentifier::Pack() const
+WindowNumber VehicleListIdentifier::ToWindowNumber() const
 {
-	byte c = this->company == OWNER_NONE ? 0xF : (byte)this->company;
+	uint8_t c = this->company == OWNER_NONE ? 0xF : this->company.base();
 	assert(c             < (1 <<  4));
 	assert(this->vtype   < (1 <<  2));
 	assert(this->index   < (1 << 20));
@@ -31,33 +32,38 @@ uint32_t VehicleListIdentifier::Pack() const
 	return c << 28 | this->type << 23 | this->vtype << 26 | this->index;
 }
 
-/**
- * Unpack a VehicleListIdentifier from a single uint32.
- * @param data The data to unpack.
- * @return true iff the data was valid (enough).
- */
-bool VehicleListIdentifier::UnpackIfValid(uint32_t data)
+/** Data for building a depot vehicle list. */
+struct BuildDepotVehicleListData
 {
-	byte c        = GB(data, 28, 4);
-	this->company = c == 0xF ? OWNER_NONE : (CompanyID)c;
-	this->type    = (VehicleListType)GB(data, 23, 3);
-	this->vtype   = (VehicleType)GB(data, 26, 2);
-	this->index   = GB(data, 0, 20);
-
-	return this->type < VLT_END;
-}
+	VehicleList *engines; ///< Pointer to list to add vehicles to.
+	VehicleList *wagons; ///< Pointer to list to add wagons to (can be nullptr).
+	VehicleType type; ///< Type of vehicle.
+	bool individual_wagons; ///< If true add every wagon to \a wagons which is not attached to an engine. If false only add the first wagon of every row.
+};
 
 /**
- * Decode a packed vehicle list identifier into a new one.
- * @param data The data to unpack.
+ * Add vehicles to a depot vehicle list.
+ * @param v The found vehicle.
+ * @param data The depot vehicle list data.
+ * @return Always nullptr.
  */
-/* static */ VehicleListIdentifier VehicleListIdentifier::UnPack(uint32_t data)
+static Vehicle *BuildDepotVehicleListProc(Vehicle *v, void *data)
 {
-	VehicleListIdentifier result;
-	[[maybe_unused]] bool ret = result.UnpackIfValid(data);
-	assert(ret);
-	return result;
-}
+	auto bdvld = static_cast<BuildDepotVehicleListData *>(data);
+	if (v->type != bdvld->type || !v->IsInDepot()) return nullptr;
+
+	if (bdvld->type == VEH_TRAIN) {
+		const Train *t = Train::From(v);
+		if (t->IsArticulatedPart() || t->IsRearDualheaded()) return nullptr;
+		if (bdvld->wagons != nullptr && t->First()->IsFreeWagon()) {
+			if (bdvld->individual_wagons || t->IsFreeWagon()) bdvld->wagons->push_back(t);
+			return nullptr;
+		}
+	}
+
+	if (v->IsPrimaryVehicle()) bdvld->engines->push_back(v);
+	return nullptr;
+};
 
 /**
  * Generate a list of vehicles inside a depot.
@@ -72,37 +78,8 @@ void BuildDepotVehicleList(VehicleType type, TileIndex tile, VehicleList *engine
 	engines->clear();
 	if (wagons != nullptr && wagons != engines) wagons->clear();
 
-	for (const Vehicle *v : Vehicle::Iterate()) {
-		/* General tests for all vehicle types */
-		if (v->type != type) continue;
-		if (v->tile != tile) continue;
-
-		switch (type) {
-			case VEH_TRAIN: {
-				const Train *t = Train::From(v);
-				if (t->IsArticulatedPart() || t->IsRearDualheaded()) continue;
-				if (!t->IsInDepot()) continue;
-				if (wagons != nullptr && t->First()->IsFreeWagon()) {
-					if (individual_wagons || t->IsFreeWagon()) wagons->push_back(t);
-					continue;
-				}
-				if (!t->IsPrimaryVehicle()) continue;
-				break;
-			}
-
-			default:
-				if (!v->IsPrimaryVehicle()) continue;
-				if (!v->IsInDepot()) continue;
-				break;
-		}
-
-		engines->push_back(v);
-	}
-
-	/* Ensure the lists are not wasting too much space. If the lists are fresh
-	 * (i.e. built within a command) then this will actually do nothing. */
-	engines->shrink_to_fit();
-	if (wagons != nullptr && wagons != engines) wagons->shrink_to_fit();
+	BuildDepotVehicleListData bdvld{engines, wagons, type, individual_wagons};
+	FindVehicleOnPos(tile, &bdvld, BuildDepotVehicleListProc);
 }
 
 /**
@@ -119,14 +96,14 @@ bool GenerateVehicleSortList(VehicleList *list, const VehicleListIdentifier &vli
 		case VL_STATION_LIST:
 			FindVehiclesWithOrder(
 				[&vli](const Vehicle *v) { return v->type == vli.vtype; },
-				[&vli](const Order *order) { return (order->IsType(OT_GOTO_STATION) || order->IsType(OT_GOTO_WAYPOINT) || order->IsType(OT_IMPLICIT)) && order->GetDestination() == vli.index; },
+				[&vli](const Order *order) { return (order->IsType(OT_GOTO_STATION) || order->IsType(OT_GOTO_WAYPOINT) || order->IsType(OT_IMPLICIT)) && order->GetDestination() == vli.ToStationID(); },
 				[&list](const Vehicle *v) { list->push_back(v); }
 			);
 			break;
 
 		case VL_SHARED_ORDERS: {
 			/* Add all vehicles from this vehicle's shared order list */
-			const Vehicle *v = Vehicle::GetIfValid(vli.index);
+			const Vehicle *v = Vehicle::GetIfValid(vli.ToVehicleID());
 			if (v == nullptr || v->type != vli.vtype || !v->IsPrimaryVehicle()) return false;
 
 			for (; v != nullptr; v = v->NextShared()) {
@@ -136,10 +113,10 @@ bool GenerateVehicleSortList(VehicleList *list, const VehicleListIdentifier &vli
 		}
 
 		case VL_GROUP_LIST:
-			if (vli.index != ALL_GROUP) {
+			if (vli.ToGroupID() != ALL_GROUP) {
 				for (const Vehicle *v : Vehicle::Iterate()) {
 					if (v->type == vli.vtype && v->IsPrimaryVehicle() &&
-							v->owner == vli.company && GroupIsInGroup(v->group_id, vli.index)) {
+							v->owner == vli.company && GroupIsInGroup(v->group_id, vli.ToGroupID())) {
 						list->push_back(v);
 					}
 				}
@@ -158,7 +135,7 @@ bool GenerateVehicleSortList(VehicleList *list, const VehicleListIdentifier &vli
 		case VL_DEPOT_LIST:
 			FindVehiclesWithOrder(
 				[&vli](const Vehicle *v) { return v->type == vli.vtype; },
-				[&vli](const Order *order) { return order->IsType(OT_GOTO_DEPOT) && !(order->GetDepotActionType() & ODATFB_NEAREST_DEPOT) && order->GetDestination() == vli.index; },
+				[&vli](const Order *order) { return order->IsType(OT_GOTO_DEPOT) && !(order->GetDepotActionType() & ODATFB_NEAREST_DEPOT) && order->GetDestination() == vli.ToDestinationID(); },
 				[&list](const Vehicle *v) { list->push_back(v); }
 			);
 			break;
@@ -166,6 +143,5 @@ bool GenerateVehicleSortList(VehicleList *list, const VehicleListIdentifier &vli
 		default: return false;
 	}
 
-	list->shrink_to_fit();
 	return true;
 }

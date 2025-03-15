@@ -70,11 +70,11 @@ uint16_t TimerGameCalendar::sub_date_fract = {};
 	TimerGameCalendar::date = date;
 	TimerGameCalendar::date_fract = fract;
 	TimerGameCalendar::YearMonthDay ymd = TimerGameCalendar::ConvertDateToYMD(date);
-	TimerGameCalendar::year = ymd.year;
+	TimerGameCalendar::year = TimerGameCalendar::Year{ymd.year};
 	TimerGameCalendar::month = ymd.month;
 }
 
-template<>
+template <>
 void IntervalTimer<TimerGameCalendar>::Elapsed(TimerGameCalendar::TElapsed trigger)
 {
 	if (trigger == this->period.trigger) {
@@ -82,7 +82,7 @@ void IntervalTimer<TimerGameCalendar>::Elapsed(TimerGameCalendar::TElapsed trigg
 	}
 }
 
-template<>
+template <>
 void TimeoutTimer<TimerGameCalendar>::Elapsed(TimerGameCalendar::TElapsed trigger)
 {
 	if (this->fired) return;
@@ -93,7 +93,7 @@ void TimeoutTimer<TimerGameCalendar>::Elapsed(TimerGameCalendar::TElapsed trigge
 	}
 }
 
-template<>
+template <>
 bool TimerManager<TimerGameCalendar>::Elapsed([[maybe_unused]] TimerGameCalendar::TElapsed delta)
 {
 	assert(delta == 1);
@@ -105,10 +105,13 @@ bool TimerManager<TimerGameCalendar>::Elapsed([[maybe_unused]] TimerGameCalendar
 
 	/* If we are using a non-default calendar progression speed, we need to check the sub_date_fract before updating date_fract. */
 	if (_settings_game.economy.minutes_per_calendar_year != CalendarTime::DEF_MINUTES_PER_YEAR) {
-		TimerGameCalendar::sub_date_fract++;
+		TimerGameCalendar::sub_date_fract += Ticks::DAY_TICKS;
 
 		/* Check if we are ready to increment date_fract */
-		if (TimerGameCalendar::sub_date_fract < (Ticks::DAY_TICKS * _settings_game.economy.minutes_per_calendar_year) / CalendarTime::DEF_MINUTES_PER_YEAR) return false;
+		const uint16_t threshold = (_settings_game.economy.minutes_per_calendar_year * Ticks::DAY_TICKS) / CalendarTime::DEF_MINUTES_PER_YEAR;
+		if (TimerGameCalendar::sub_date_fract < threshold) return false;
+
+		TimerGameCalendar::sub_date_fract = std::min<uint16_t>(TimerGameCalendar::sub_date_fract - threshold, Ticks::DAY_TICKS - 1);
 	}
 
 	TimerGameCalendar::date_fract++;
@@ -154,10 +157,8 @@ bool TimerManager<TimerGameCalendar>::Elapsed([[maybe_unused]] TimerGameCalendar
 
 	/* If we reached the maximum year, decrement dates by a year. */
 	if (TimerGameCalendar::year == CalendarTime::MAX_YEAR + 1) {
-		int days_this_year;
-
 		TimerGameCalendar::year--;
-		days_this_year = TimerGameCalendar::IsLeapYear(TimerGameCalendar::year) ? CalendarTime::DAYS_IN_LEAP_YEAR : CalendarTime::DAYS_IN_YEAR;
+		TimerGameCalendar::Date days_this_year{TimerGameCalendar::IsLeapYear(TimerGameCalendar::year) ? CalendarTime::DAYS_IN_LEAP_YEAR : CalendarTime::DAYS_IN_YEAR};
 		TimerGameCalendar::date -= days_this_year;
 	}
 
@@ -165,7 +166,7 @@ bool TimerManager<TimerGameCalendar>::Elapsed([[maybe_unused]] TimerGameCalendar
 }
 
 #ifdef WITH_ASSERT
-template<>
+template <>
 void TimerManager<TimerGameCalendar>::Validate(TimerGameCalendar::TPeriod period)
 {
 	if (period.priority == TimerGameCalendar::Priority::NONE) return;

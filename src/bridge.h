@@ -19,7 +19,7 @@
  * which is used to determine the proper sprite table to use
  * while drawing a given bridge part.
  */
-enum BridgePieces {
+enum BridgePieces : uint8_t {
 	BRIDGE_PIECE_NORTH = 0,
 	BRIDGE_PIECE_SOUTH,
 	BRIDGE_PIECE_INNER_NORTH,
@@ -27,12 +27,13 @@ enum BridgePieces {
 	BRIDGE_PIECE_MIDDLE_ODD,
 	BRIDGE_PIECE_MIDDLE_EVEN,
 	BRIDGE_PIECE_HEAD,
-	BRIDGE_PIECE_INVALID,
+	NUM_BRIDGE_PIECES,
 };
 
-DECLARE_POSTFIX_INCREMENT(BridgePieces)
+DECLARE_INCREMENT_DECREMENT_OPERATORS(BridgePieces)
 
 static const uint MAX_BRIDGES = 13; ///< Maximal number of available bridge specs.
+constexpr uint SPRITES_PER_BRIDGE_PIECE = 32; ///< Number of sprites there are per bridge piece.
 
 typedef uint BridgeType; ///< Bridge spec number.
 
@@ -41,7 +42,7 @@ typedef uint BridgeType; ///< Bridge spec number.
  */
 struct BridgeSpec {
 	TimerGameCalendar::Year avail_year; ///< the year where it becomes available
-	byte min_length;                    ///< the minimum length (not counting start and end tile)
+	uint8_t min_length;                    ///< the minimum length (not counting start and end tile)
 	uint16_t max_length;                  ///< the maximum length (not counting start and end tile)
 	uint16_t price;                       ///< the price multiplier
 	uint16_t speed;                       ///< maximum travel speed (1 unit = 1/1.6 mph = 1 km-ish/h)
@@ -49,8 +50,8 @@ struct BridgeSpec {
 	PaletteID pal;                      ///< the palette which is used in the GUI
 	StringID material;                  ///< the string that contains the bridge description
 	StringID transport_name[2];         ///< description of the bridge, when built for road or rail
-	PalSpriteID **sprite_table;         ///< table of sprites for drawing the bridge
-	byte flags;                         ///< bit 0 set: disable drawing of far pillars.
+	std::vector<std::vector<PalSpriteID>> sprite_table; ///< table of sprites for drawing the bridge
+	uint8_t flags;                         ///< bit 0 set: disable drawing of far pillars.
 };
 
 extern BridgeSpec _bridge[MAX_BRIDGES];
@@ -71,7 +72,7 @@ inline const BridgeSpec *GetBridgeSpec(BridgeType i)
 
 void DrawBridgeMiddle(const TileInfo *ti);
 
-CommandCost CheckBridgeAvailability(BridgeType bridge_type, uint bridge_len, DoCommandFlag flags = DC_NONE);
+CommandCost CheckBridgeAvailability(BridgeType bridge_type, uint bridge_len, DoCommandFlags flags = {});
 int CalcBridgeLenCostFactor(int x);
 
 void ResetBridges();

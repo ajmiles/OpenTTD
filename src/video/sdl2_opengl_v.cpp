@@ -42,7 +42,7 @@
 
 static FVideoDriver_SDL_OpenGL iFVideoDriver_SDL_OpenGL;
 
-/** Platform-specific callback to get an OpenGL funtion pointer. */
+/** Platform-specific callback to get an OpenGL function pointer. */
 static OGLProc GetOGLProcAddressCallback(const char *proc)
 {
 	return reinterpret_cast<OGLProc>(SDL_GL_GetProcAddress(proc));
@@ -53,13 +53,13 @@ bool VideoDriver_SDL_OpenGL::CreateMainWindow(uint w, uint h, uint flags)
 	return this->VideoDriver_SDL_Base::CreateMainWindow(w, h, flags | SDL_WINDOW_OPENGL);
 }
 
-const char *VideoDriver_SDL_OpenGL::Start(const StringList &param)
+std::optional<std::string_view> VideoDriver_SDL_OpenGL::Start(const StringList &param)
 {
-	const char *error = VideoDriver_SDL_Base::Start(param);
-	if (error != nullptr) return error;
+	auto error = VideoDriver_SDL_Base::Start(param);
+	if (error) return error;
 
 	error = this->AllocateContext();
-	if (error != nullptr) {
+	if (error) {
 		this->Stop();
 		return error;
 	}
@@ -81,7 +81,7 @@ const char *VideoDriver_SDL_OpenGL::Start(const StringList &param)
 	/* Main loop expects to start with the buffer unmapped. */
 	this->ReleaseVideoPointer();
 
-	return nullptr;
+	return std::nullopt;
 }
 
 void VideoDriver_SDL_OpenGL::Stop()
@@ -105,7 +105,7 @@ void VideoDriver_SDL_OpenGL::ToggleVsync(bool vsync)
 	SDL_GL_SetSwapInterval(vsync);
 }
 
-const char *VideoDriver_SDL_OpenGL::AllocateContext()
+std::optional<std::string_view> VideoDriver_SDL_OpenGL::AllocateContext()
 {
 	SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
 	SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
@@ -180,7 +180,7 @@ void VideoDriver_SDL_OpenGL::Paint()
 
 		/* Always push a changed palette to OpenGL. */
 		OpenGLBackend::Get()->UpdatePalette(this->local_palette.palette, this->local_palette.first_dirty, this->local_palette.count_dirty);
-		if (blitter->UsePaletteAnimation() == Blitter::PALETTE_ANIMATION_BLITTER) {
+		if (blitter->UsePaletteAnimation() == Blitter::PaletteAnimation::Blitter) {
 			blitter->PaletteAnimate(this->local_palette);
 		}
 

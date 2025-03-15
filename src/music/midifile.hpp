@@ -11,15 +11,16 @@
 #define MUSIC_MIDIFILE_HPP
 
 #include "../stdafx.h"
+#include "../fileio_type.h"
 #include "midi.h"
 
 struct MusicSongInfo;
 
 struct MidiFile {
 	struct DataBlock {
-		uint32_t ticktime;        ///< tick number since start of file this block should be triggered at
-		uint32_t realtime;        ///< real-time (microseconds) since start of file this block should be triggered at
-		std::vector<byte> data; ///< raw midi data contained in block
+		uint32_t ticktime; ///< tick number since start of file this block should be triggered at
+		uint32_t realtime = 0; ///< real-time (microseconds) since start of file this block should be triggered at
+		std::vector<uint8_t> data; ///< raw midi data contained in block
 		DataBlock(uint32_t _ticktime = 0) : ticktime(_ticktime) { }
 	};
 	struct TempoChange {
@@ -28,15 +29,15 @@ struct MidiFile {
 		TempoChange(uint32_t _ticktime, uint32_t _tempo) : ticktime(_ticktime), tempo(_tempo) { }
 	};
 
-	std::vector<DataBlock> blocks;   ///< sequential time-annotated data of file, merged to a single track
-	std::vector<TempoChange> tempos; ///< list of tempo changes in file
-	uint16_t tickdiv;                  ///< ticks per quarter note
+	std::vector<DataBlock> blocks{}; ///< sequential time-annotated data of file, merged to a single track
+	std::vector<TempoChange> tempos{}; ///< list of tempo changes in file
+	uint16_t tickdiv = 0; ///< ticks per quarter note
 
 	MidiFile();
 	~MidiFile();
 
 	bool LoadFile(const std::string &filename);
-	bool LoadMpsData(const byte *data, size_t length);
+	bool LoadMpsData(const uint8_t *data, size_t length);
 	bool LoadSong(const MusicSongInfo &song);
 	void MoveFrom(MidiFile &other);
 
@@ -44,7 +45,7 @@ struct MidiFile {
 
 	static std::string GetSMFFile(const MusicSongInfo &song);
 	static bool ReadSMFHeader(const std::string &filename, SMFHeader &header);
-	static bool ReadSMFHeader(FILE *file, SMFHeader &header);
+	static bool ReadSMFHeader(FileHandle &file, SMFHeader &header);
 };
 
 #endif /* MUSIC_MIDIFILE_HPP */

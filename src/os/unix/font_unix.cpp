@@ -15,7 +15,7 @@
 
 #include <fontconfig/fontconfig.h>
 
-#include "safeguards.h"
+#include "../../safeguards.h"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -55,8 +55,9 @@ FT_Error GetFontByFaceName(const char *font_name, FT_Face *face)
 	auto [font_family, font_style] = SplitFontFamilyAndStyle(font_name);
 
 	/* Resolve the name and populate the information structure */
-	FcPattern *pat = FcNameParse((FcChar8 *)font_family.data());
-	if (!font_style.empty()) FcPatternAddString(pat, FC_STYLE, (FcChar8 *)font_style.data());
+	FcPattern *pat = FcPatternCreate();
+	if (!font_family.empty()) FcPatternAddString(pat, FC_FAMILY, reinterpret_cast<const FcChar8 *>(font_family.c_str()));
+	if (!font_style.empty()) FcPatternAddString(pat, FC_STYLE, reinterpret_cast<const FcChar8 *>(font_style.c_str()));
 	FcConfigSubstitute(nullptr, pat, FcMatchPattern);
 	FcDefaultSubstitute(pat);
 	FcFontSet *fs = FcFontSetCreate();
@@ -97,7 +98,7 @@ FT_Error GetFontByFaceName(const char *font_name, FT_Face *face)
 	return err;
 }
 
-bool SetFallbackFont(FontCacheSettings *settings, const std::string &language_isocode, int, MissingGlyphSearcher *callback)
+bool SetFallbackFont(FontCacheSettings *settings, const std::string &language_isocode, MissingGlyphSearcher *callback)
 {
 	bool ret = false;
 

@@ -83,7 +83,7 @@ NetworkRecvStatus QueryNetworkGameSocketHandler::SendGameInfo()
 {
 	Debug(net, 9, "Query::SendGameInfo()");
 
-	this->SendPacket(std::make_unique<Packet>(PACKET_CLIENT_GAME_INFO));
+	this->SendPacket(std::make_unique<Packet>(this, PACKET_CLIENT_GAME_INFO));
 	return NETWORK_RECV_STATUS_OKAY;
 }
 
@@ -120,10 +120,10 @@ NetworkRecvStatus QueryNetworkGameSocketHandler::Receive_SERVER_GAME_INFO(Packet
 	NetworkGameList *item = NetworkGameListAddItem(this->connection_string);
 
 	/* Clear any existing GRFConfig chain. */
-	ClearGRFConfigList(&item->info.grfconfig);
+	ClearGRFConfigList(item->info.grfconfig);
 	/* Retrieve the NetworkGameInfo from the packet. */
 	DeserializeNetworkGameInfo(p, item->info);
-	/* Check for compatability with the client. */
+	/* Check for compatibility with the client. */
 	CheckGameCompatibility(item->info);
 	/* Ensure we consider the server online. */
 	item->status = NGLS_ONLINE;

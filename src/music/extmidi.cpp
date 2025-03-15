@@ -10,7 +10,6 @@
 #include "../stdafx.h"
 #include "../debug.h"
 #include "../string_func.h"
-#include "../core/alloc_func.hpp"
 #include "../sound/sound_driver.hpp"
 #include "../video/video_driver.hpp"
 #include "../gfx_func.h"
@@ -35,10 +34,10 @@
 /** Factory for the midi player that uses external players. */
 static FMusicDriver_ExtMidi iFMusicDriver_ExtMidi;
 
-const char *MusicDriver_ExtMidi::Start(const StringList &parm)
+std::optional<std::string_view> MusicDriver_ExtMidi::Start(const StringList &parm)
 {
-	if (strcmp(VideoDriver::GetInstance()->GetName(), "allegro") == 0 ||
-			strcmp(SoundDriver::GetInstance()->GetName(), "allegro") == 0) {
+	if (VideoDriver::GetInstance()->GetName() == "allegro" ||
+			SoundDriver::GetInstance()->GetName() == "allegro") {
 		return "the extmidi driver does not work when Allegro is loaded.";
 	}
 
@@ -62,7 +61,7 @@ const char *MusicDriver_ExtMidi::Start(const StringList &parm)
 
 	this->song.clear();
 	this->pid = -1;
-	return nullptr;
+	return std::nullopt;
 }
 
 void MusicDriver_ExtMidi::Stop()
@@ -95,7 +94,7 @@ bool MusicDriver_ExtMidi::IsSongPlaying()
 	return this->pid != -1;
 }
 
-void MusicDriver_ExtMidi::SetVolume(byte)
+void MusicDriver_ExtMidi::SetVolume(uint8_t)
 {
 	Debug(driver, 1, "extmidi: set volume not implemented");
 }

@@ -6,7 +6,7 @@
  */
 
 /**
- * @file game_changelog.hpp Lists all changes / additions to the API.
+ * @page game_changelog Lists all changes / additions to the API.
  *
  * Only new / renamed / deleted api functions will be listed here. A list of
  * bug fixes can be found in the normal changelog. Note that removed API
@@ -17,6 +17,16 @@
  *
  * This version is not yet released. The following changes are not set in stone yet.
  *
+ * API additions:
+ * \li GSEventVehicleCrashed::GetVictims
+ * \li GSEventCompanyRenamed
+ * \li GSEventPresidentRenamed
+ *
+ * Other changes:
+ * \li GSBridge::GetBridgeID renamed to GSBridge::GetBridgeType
+ * \li GSWaypoint::GetWaypointID now returns the StationID of any type of waypoint
+ * \li GSList instances can now be saved
+ *
  * \b 14.0
  *
  * API additions:
@@ -24,7 +34,6 @@
  * \li GSAsyncMode
  * \li GSCompanyMode::IsValid
  * \li GSCompanyMode::IsDeity
- * \li GSTimeMode
  * \li GSTown::ROAD_LAYOUT_RANDOM
  * \li GSVehicle::IsPrimaryVehicle
  * \li GSOrder::SetOrderJumpTo
@@ -95,6 +104,7 @@
  * API removals:
  * \li GSError::ERR_PRECONDITION_TOO_MANY_PARAMETERS, that error is never returned anymore.
  * \li GSInfo::CONFIG_RANDOM, no longer used.
+ * \li GSInfo::AddSettings random_deviation is no longer used.
  *
  * Other changes:
  * \li GSGroupList accepts an optional filter function
@@ -284,7 +294,7 @@
  * \li GSEngine::IsValidEngine and GSEngine::IsBuildable when outside GSCompanyMode scope
  * \li GSEventExclusiveTransportRights
  * \li GSEventRoadReconstruction
- * \li GSNews::NT_ACCIDENT, GSNews::NT_COMPANY_INFO, GSNews::NT_ADVICE, GSNews::NT_ACCEPTANCE
+ * \li GSNews::NewsType::Accident, GSNews::NewsType::CompanyInfo, GSNews::NewsType::Advice, GSNews::NewsType::Acceptance
  * \li GSIndustryType::IsProcessingIndustry
  * \li GSStation::IsAirportClosed
  * \li GSStation::OpenCloseAirport
@@ -300,4 +310,18 @@
  *
  * \b 1.2.0
  * \li First stable release with the NoGo framework.
+ */
+
+/**
+ * @mainpage
+ *
+ * What's new?
+ * \li \ref game_changelog
+ *
+ * Main classes:
+ * \li \ref GSInfo
+ * \li \ref GSController
+ *
+ * Detail topics:
+ * \li \ref script_ids
  */

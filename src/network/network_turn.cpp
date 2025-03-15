@@ -91,7 +91,7 @@ void ClientNetworkTurnSocketHandler::Connect()
  * Not until you run Connect() on the resulting instance will it start setting
  * up the TURN connection.
  * @param token The token as received from the Game Coordinator.
- * @param tracking_number The tracking number as recieved from the Game Coordinator.
+ * @param tracking_number The tracking number as received from the Game Coordinator.
  * @param ticket The ticket as received from the Game Coordinator.
  * @param connection_string Connection string of the TURN server.
  * @return The handler for this TURN connection.
@@ -100,7 +100,7 @@ void ClientNetworkTurnSocketHandler::Connect()
 {
 	auto turn_handler = std::make_unique<ClientNetworkTurnSocketHandler>(token, tracking_number, connection_string);
 
-	auto p = std::make_unique<Packet>(PACKET_TURN_SERCLI_CONNECT);
+	auto p = std::make_unique<Packet>(turn_handler.get(), PACKET_TURN_SERCLI_CONNECT);
 	p->Send_uint8(NETWORK_COORDINATOR_VERSION);
 	p->Send_string(ticket);
 

@@ -12,7 +12,6 @@
 #include "command_func.h"
 #include "error_func.h"
 #include "news_func.h"
-#include "pathfinder/npf/npf_func.h"
 #include "station_base.h"
 #include "company_func.h"
 #include "articulated_vehicles.h"
@@ -83,7 +82,7 @@ static const Trackdir _road_reverse_table[DIAGDIR_END] = {
 bool RoadVehicle::IsBus() const
 {
 	assert(this->IsFrontEngine());
-	return IsCargoInClass(this->cargo_type, CC_PASSENGERS);
+	return IsCargoInClass(this->cargo_type, CargoClass::Passengers);
 }
 
 /**
@@ -230,7 +229,7 @@ void RoadVehUpdateCache(RoadVehicle *v, bool same_length)
 		assert(u->First() == v);
 
 		/* Update the 'first engine' */
-		u->gcache.first_engine = (v == u) ? INVALID_ENGINE : v->engine_type;
+		u->gcache.first_engine = (v == u) ? EngineID::Invalid() : v->engine_type;
 
 		/* Update the length of the vehicle. */
 		uint veh_len = GetRoadVehLength(u);
@@ -259,14 +258,14 @@ void RoadVehUpdateCache(RoadVehicle *v, bool same_length)
  * @param[out] ret the vehicle that has been built.
  * @return the cost of this operation or an error.
  */
-CommandCost CmdBuildRoadVehicle(DoCommandFlag flags, TileIndex tile, const Engine *e, Vehicle **ret)
+CommandCost CmdBuildRoadVehicle(DoCommandFlags flags, TileIndex tile, const Engine *e, Vehicle **ret)
 {
 	/* Check that the vehicle can drive on the road in question */
 	RoadType rt = e->u.road.roadtype;
 	const RoadTypeInfo *rti = GetRoadTypeInfo(rt);
-	if (!HasTileAnyRoadType(tile, rti->powered_roadtypes)) return_cmd_error(STR_ERROR_DEPOT_WRONG_DEPOT_TYPE);
+	if (!HasTileAnyRoadType(tile, rti->powered_roadtypes)) return CommandCost(STR_ERROR_DEPOT_WRONG_DEPOT_TYPE);
 
-	if (flags & DC_EXEC) {
+	if (flags.Test(DoCommandFlag::Execute)) {
 		const RoadVehicleInfo *rvi = &e->u.road;
 
 		RoadVehicle *v = new RoadVehicle();
@@ -282,18 +281,18 @@ CommandCost CmdBuildRoadVehicle(DoCommandFlag flags, TileIndex tile, const Engin
 		v->z_pos = GetSlopePixelZ(x, y, true);
 
 		v->state = RVSB_IN_DEPOT;
-		v->vehstatus = VS_HIDDEN | VS_STOPPED | VS_DEFPAL;
+		v->vehstatus = {VehState::Hidden, VehState::Stopped, VehState::DefaultPalette};
 
 		v->spritenum = rvi->image_index;
 		v->cargo_type = e->GetDefaultCargoType();
-		assert(IsValidCargoID(v->cargo_type));
+		assert(IsValidCargoType(v->cargo_type));
 		v->cargo_cap = rvi->capacity;
 		v->refit_cap = 0;
 
-		v->last_station_visited = INVALID_STATION;
-		v->last_loading_station = INVALID_STATION;
+		v->last_station_visited = StationID::Invalid();
+		v->last_loading_station = StationID::Invalid();
 		v->engine_type = e->index;
-		v->gcache.first_engine = INVALID_ENGINE; // needs to be set before first callback
+		v->gcache.first_engine = EngineID::Invalid(); // needs to be set before first callback
 
 		v->reliability = e->reliability;
 		v->reliability_spd_dec = e->reliability_spd_dec;
@@ -313,7 +312,7 @@ CommandCost CmdBuildRoadVehicle(DoCommandFlag flags, TileIndex tile, const Engin
 		v->compatible_roadtypes = rti->powered_roadtypes;
 		v->gcache.cached_veh_length = VEHICLE_LENGTH;
 
-		if (e->flags & ENGINE_EXCLUSIVE_PREVIEW) SetBit(v->vehicle_flags, VF_BUILT_AS_PROTOTYPE);
+		if (e->flags.Test(EngineFlag::ExclusivePreview)) v->vehicle_flags.Set(VehicleFlag::BuiltAsPrototype);
 		v->SetServiceIntervalIsPercent(Company::Get(_current_company)->settings.vehicle.servint_ispercent);
 
 		AddArticulatedParts(v);
@@ -342,12 +341,7 @@ static FindDepotData FindClosestRoadDepot(const RoadVehicle *v, int max_distance
 {
 	if (IsRoadDepotTile(v->tile)) return FindDepotData(v->tile, 0);
 
-	switch (_settings_game.pf.pathfinder_for_roadvehs) {
-		case VPF_NPF: return NPFRoadVehicleFindNearestDepot(v, max_distance);
-		case VPF_YAPF: return YapfRoadVehicleFindNearestDepot(v, max_distance);
-
-		default: NOT_REACHED();
-	}
+	return YapfRoadVehicleFindNearestDepot(v, max_distance);
 }
 
 ClosestDepot RoadVehicle::FindClosestDepot()
@@ -364,7 +358,7 @@ ClosestDepot RoadVehicle::FindClosestDepot()
  * @param veh_id vehicle ID to turn
  * @return the cost of this operation or an error
  */
-CommandCost CmdTurnRoadVeh(DoCommandFlag flags, VehicleID veh_id)
+CommandCost CmdTurnRoadVeh(DoCommandFlags flags, VehicleID veh_id)
 {
 	RoadVehicle *v = RoadVehicle::GetIfValid(veh_id);
 	if (v == nullptr) return CMD_ERROR;
@@ -374,8 +368,7 @@ CommandCost CmdTurnRoadVeh(DoCommandFlag flags, VehicleID veh_id)
 	CommandCost ret = CheckOwnership(v->owner);
 	if (ret.Failed()) return ret;
 
-	if ((v->vehstatus & VS_STOPPED) ||
-			(v->vehstatus & VS_CRASHED) ||
+	if (v->vehstatus.Any({VehState::Stopped, VehState::Crashed}) ||
 			v->breakdown_ctr != 0 ||
 			v->overtaking != 0 ||
 			v->state == RVSB_WORMHOLE ||
@@ -388,7 +381,7 @@ CommandCost CmdTurnRoadVeh(DoCommandFlag flags, VehicleID veh_id)
 
 	if (IsTileType(v->tile, MP_TUNNELBRIDGE) && DirToDiagDir(v->direction) == GetTunnelBridgeDirection(v->tile)) return CMD_ERROR;
 
-	if (flags & DC_EXEC) {
+	if (flags.Test(DoCommandFlag::Execute)) {
 		v->reverse_ctr = 180;
 
 		/* Unbunching data is no longer valid. */
@@ -455,7 +448,7 @@ inline int RoadVehicle::GetCurrentMaxSpeed() const
 		}
 
 		/* Vehicle is on the middle part of a bridge. */
-		if (u->state == RVSB_WORMHOLE && !(u->vehstatus & VS_HIDDEN)) {
+		if (u->state == RVSB_WORMHOLE && !u->vehstatus.Test(VehState::Hidden)) {
 			max_speed = std::min(max_speed, GetBridgeSpec(GetBridgeType(u->tile))->speed * 2);
 		}
 	}
@@ -534,9 +527,9 @@ static Vehicle *EnumCheckRoadVehCrashTrain(Vehicle *v, void *data)
 
 uint RoadVehicle::Crash(bool flooded)
 {
-	uint pass = this->GroundVehicleBase::Crash(flooded);
+	uint victims = this->GroundVehicleBase::Crash(flooded);
 	if (this->IsFrontEngine()) {
-		pass += 1; // driver
+		victims += 1; // driver
 
 		/* If we're in a drive through road stop we ought to leave it */
 		if (IsInsideMM(this->state, RVSB_IN_DT_ROAD_STOP, RVSB_IN_DT_ROAD_STOP_END)) {
@@ -544,25 +537,22 @@ uint RoadVehicle::Crash(bool flooded)
 		}
 	}
 	this->crashed_ctr = flooded ? 2000 : 1; // max 2220, disappear pretty fast when flooded
-	return pass;
+	return victims;
 }
 
 static void RoadVehCrash(RoadVehicle *v)
 {
-	uint pass = v->Crash();
+	uint victims = v->Crash();
 
-	AI::NewEvent(v->owner, new ScriptEventVehicleCrashed(v->index, v->tile, ScriptEventVehicleCrashed::CRASH_RV_LEVEL_CROSSING));
-	Game::NewEvent(new ScriptEventVehicleCrashed(v->index, v->tile, ScriptEventVehicleCrashed::CRASH_RV_LEVEL_CROSSING));
+	AI::NewEvent(v->owner, new ScriptEventVehicleCrashed(v->index, v->tile, ScriptEventVehicleCrashed::CRASH_RV_LEVEL_CROSSING, victims));
+	Game::NewEvent(new ScriptEventVehicleCrashed(v->index, v->tile, ScriptEventVehicleCrashed::CRASH_RV_LEVEL_CROSSING, victims));
 
-	SetDParam(0, pass);
-	StringID newsitem = (pass == 1) ? STR_NEWS_ROAD_VEHICLE_CRASH_DRIVER : STR_NEWS_ROAD_VEHICLE_CRASH;
-	NewsType newstype = NT_ACCIDENT;
+	EncodedString headline = (victims == 1)
+		? GetEncodedString(STR_NEWS_ROAD_VEHICLE_CRASH_DRIVER)
+		: GetEncodedString(STR_NEWS_ROAD_VEHICLE_CRASH, victims);
+	NewsType newstype = v->owner == _local_company ? NewsType::Accident : NewsType::AccidentOther;
 
-	if (v->owner != _local_company) {
-		newstype = NT_ACCIDENT_OTHER;
-	}
-
-	AddTileNewsItem(newsitem, newstype, v->tile);
+	AddTileNewsItem(std::move(headline), newstype, v->tile);
 
 	ModifyStationRatingAround(v->tile, v->owner, -160, 22);
 	if (_settings_client.sound.disaster) SndPlayVehicleFx(SND_12_EXPLOSION, v);
@@ -588,13 +578,13 @@ static bool RoadVehCheckTrainCrash(RoadVehicle *v)
 
 TileIndex RoadVehicle::GetOrderStationLocation(StationID station)
 {
-	if (station == this->last_station_visited) this->last_station_visited = INVALID_STATION;
+	if (station == this->last_station_visited) this->last_station_visited = StationID::Invalid();
 
 	const Station *st = Station::Get(station);
 	if (!CanVehicleUseStation(this, st)) {
 		/* There is no stop left at the station, so don't even TRY to go there */
 		this->IncrementRealOrderIndex();
-		return 0;
+		return TileIndex{};
 	}
 
 	return st->xy;
@@ -695,10 +685,9 @@ static void RoadVehArrivesAt(const RoadVehicle *v, Station *st)
 		/* Check if station was ever visited before */
 		if (!(st->had_vehicle_of_type & HVOT_BUS)) {
 			st->had_vehicle_of_type |= HVOT_BUS;
-			SetDParam(0, st->index);
 			AddVehicleNewsItem(
-				RoadTypeIsRoad(v->roadtype) ? STR_NEWS_FIRST_BUS_ARRIVAL : STR_NEWS_FIRST_PASSENGER_TRAM_ARRIVAL,
-				(v->owner == _local_company) ? NT_ARRIVAL_COMPANY : NT_ARRIVAL_OTHER,
+				GetEncodedString(RoadTypeIsRoad(v->roadtype) ? STR_NEWS_FIRST_BUS_ARRIVAL : STR_NEWS_FIRST_PASSENGER_TRAM_ARRIVAL, st->index),
+				(v->owner == _local_company) ? NewsType::ArrivalCompany : NewsType::ArrivalOther,
 				v->index,
 				st->index
 			);
@@ -709,10 +698,9 @@ static void RoadVehArrivesAt(const RoadVehicle *v, Station *st)
 		/* Check if station was ever visited before */
 		if (!(st->had_vehicle_of_type & HVOT_TRUCK)) {
 			st->had_vehicle_of_type |= HVOT_TRUCK;
-			SetDParam(0, st->index);
 			AddVehicleNewsItem(
-				RoadTypeIsRoad(v->roadtype) ? STR_NEWS_FIRST_TRUCK_ARRIVAL : STR_NEWS_FIRST_CARGO_TRAM_ARRIVAL,
-				(v->owner == _local_company) ? NT_ARRIVAL_COMPANY : NT_ARRIVAL_OTHER,
+				GetEncodedString(RoadTypeIsRoad(v->roadtype) ? STR_NEWS_FIRST_TRUCK_ARRIVAL : STR_NEWS_FIRST_CARGO_TRAM_ARRIVAL, st->index),
+				(v->owner == _local_company) ? NewsType::ArrivalCompany : NewsType::ArrivalOther,
 				v->index,
 				st->index
 			);
@@ -829,7 +817,7 @@ static void RoadVehCheckOvertake(RoadVehicle *v, RoadVehicle *u)
 	 * Original acceleration always accelerates, so always use the maximum speed. */
 	int u_speed = (_settings_game.vehicle.roadveh_acceleration_model == AM_ORIGINAL || u->GetAcceleration() > 0) ? u->GetCurrentMaxSpeed() : u->cur_speed;
 	if (u_speed >= v->GetCurrentMaxSpeed() &&
-			!(u->vehstatus & VS_STOPPED) &&
+			!u->vehstatus.Test(VehState::Stopped) &&
 			u->cur_speed != 0) {
 		return;
 	}
@@ -850,7 +838,7 @@ static void RoadVehCheckOvertake(RoadVehicle *v, RoadVehicle *u)
 
 	/* When the vehicle in front of us is stopped we may only take
 	 * half the time to pass it than when the vehicle is moving. */
-	v->overtaking_ctr = (od.u->cur_speed == 0 || (od.u->vehstatus & VS_STOPPED)) ? RV_OVERTAKE_TIMEOUT / 2 : 0;
+	v->overtaking_ctr = (od.u->cur_speed == 0 || od.u->vehstatus.Test(VehState::Stopped)) ? RV_OVERTAKE_TIMEOUT / 2 : 0;
 	v->overtaking = RVSB_DRIVE_SIDE;
 }
 
@@ -903,12 +891,12 @@ static Trackdir RoadFindPathToDest(RoadVehicle *v, TileIndex tile, DiagDirection
 	} else if (IsTileType(tile, MP_STATION) && IsBayRoadStopTile(tile)) {
 		/* Standard road stop (drive-through stops are treated as normal road) */
 
-		if (!IsTileOwner(tile, v->owner) || GetRoadStopDir(tile) == enterdir || v->HasArticulatedPart()) {
+		if (!IsTileOwner(tile, v->owner) || GetBayRoadStopDir(tile) == enterdir || v->HasArticulatedPart()) {
 			/* different station owner or wrong orientation or the vehicle has articulated parts */
 			trackdirs = TRACKDIR_BIT_NONE;
 		} else {
 			/* Our station */
-			RoadStopType rstype = v->IsBus() ? ROADSTOP_BUS : ROADSTOP_TRUCK;
+			RoadStopType rstype = v->IsBus() ? RoadStopType::Bus : RoadStopType::Truck;
 
 			if (GetRoadStopType(tile) != rstype) {
 				/* Wrong station type */
@@ -963,7 +951,7 @@ static Trackdir RoadFindPathToDest(RoadVehicle *v, TileIndex tile, DiagDirection
 
 	/* Only one track to choose between? */
 	if (KillFirstBit(trackdirs) == TRACKDIR_BIT_NONE) {
-		if (!v->path.empty() && v->path.tile.front() == tile) {
+		if (!v->path.empty() && v->path.back().tile == tile) {
 			/* Vehicle expected a choice here, invalidate its path. */
 			v->path.clear();
 		}
@@ -972,15 +960,14 @@ static Trackdir RoadFindPathToDest(RoadVehicle *v, TileIndex tile, DiagDirection
 
 	/* Attempt to follow cached path. */
 	if (!v->path.empty()) {
-		if (v->path.tile.front() != tile) {
+		if (v->path.back().tile != tile) {
 			/* Vehicle didn't expect a choice here, invalidate its path. */
 			v->path.clear();
 		} else {
-			Trackdir trackdir = v->path.td.front();
+			Trackdir trackdir = v->path.back().trackdir;
 
 			if (HasBit(trackdirs, trackdir)) {
-				v->path.td.pop_front();
-				v->path.tile.pop_front();
+				v->path.pop_back();
 				return_track(trackdir);
 			}
 
@@ -989,12 +976,8 @@ static Trackdir RoadFindPathToDest(RoadVehicle *v, TileIndex tile, DiagDirection
 		}
 	}
 
-	switch (_settings_game.pf.pathfinder_for_roadvehs) {
-		case VPF_NPF:  best_track = NPFRoadVehicleChooseTrack(v, tile, enterdir, path_found); break;
-		case VPF_YAPF: best_track = YapfRoadVehicleChooseTrack(v, tile, enterdir, trackdirs, path_found, v->path); break;
+	best_track = YapfRoadVehicleChooseTrack(v, tile, enterdir, trackdirs, path_found, v->path);
 
-		default: NOT_REACHED();
-	}
 	v->HandlePathfindingResult(path_found);
 
 found_best_track:;
@@ -1005,7 +988,7 @@ found_best_track:;
 }
 
 struct RoadDriveEntry {
-	byte x, y;
+	uint8_t x, y;
 };
 
 #include "table/roadveh_movement.h"
@@ -1044,7 +1027,7 @@ bool RoadVehLeaveDepot(RoadVehicle *v, bool first)
 		v->cur_speed = 0;
 	}
 
-	v->vehstatus &= ~VS_HIDDEN;
+	v->vehstatus.Reset(VehState::Hidden);
 	v->state = tdir;
 	v->frame = RVC_DEPOT_START_FRAME;
 
@@ -1066,7 +1049,7 @@ static Trackdir FollowPreviousRoadVehicle(const RoadVehicle *v, const RoadVehicl
 		return _road_reverse_table[entry_dir];
 	}
 
-	byte prev_state = prev->state;
+	uint8_t prev_state = prev->state;
 	Trackdir dir;
 
 	if (prev_state == RVSB_WORMHOLE || prev_state == RVSB_IN_DEPOT) {
@@ -1135,9 +1118,9 @@ static Trackdir FollowPreviousRoadVehicle(const RoadVehicle *v, const RoadVehicl
 static bool CanBuildTramTrackOnTile(CompanyID c, TileIndex t, RoadType rt, RoadBits r)
 {
 	/* The 'current' company is not necessarily the owner of the vehicle. */
-	Backup<CompanyID> cur_company(_current_company, c, FILE_LINE);
+	Backup<CompanyID> cur_company(_current_company, c);
 
-	CommandCost ret = Command<CMD_BUILD_ROAD>::Do(DC_NO_WATER, t, r, rt, DRD_NONE, 0);
+	CommandCost ret = Command<CMD_BUILD_ROAD>::Do(DoCommandFlag::NoWater, t, r, rt, DRD_NONE, TownID::Invalid());
 
 	cur_company.Restore();
 	return ret.Succeeded();
@@ -1188,7 +1171,7 @@ bool IndividualRoadVehicleController(RoadVehicle *v, const RoadVehicle *prev)
 		v->x_pos = gp.x;
 		v->y_pos = gp.y;
 		v->UpdatePosition();
-		if ((v->vehstatus & VS_HIDDEN) == 0) v->Vehicle::UpdateViewport(true);
+		if (!v->vehstatus.Test(VehState::Hidden)) v->Vehicle::UpdateViewport(true);
 		return true;
 	}
 
@@ -1291,8 +1274,7 @@ again:
 			if (u != nullptr) {
 				v->cur_speed = u->First()->cur_speed;
 				/* We might be blocked, prevent pathfinding rerun as we already know where we are heading to. */
-				v->path.tile.push_front(tile);
-				v->path.td.push_front(dir);
+				v->path.emplace_back(dir, tile);
 				return false;
 			}
 		}
@@ -1328,7 +1310,7 @@ again:
 					v->tile != tile) {
 				/* So, keep 'our' state */
 				dir = (Trackdir)v->state;
-			} else if (IsRoadStop(v->tile)) {
+			} else if (IsStationRoadStop(v->tile)) {
 				/* We're not continuing our drive through road stop, so leave. */
 				RoadStop::GetByTile(v->tile, GetRoadStopType(v->tile))->Leave(v);
 			}
@@ -1338,7 +1320,7 @@ again:
 			TileIndex old_tile = v->tile;
 
 			v->tile = tile;
-			v->state = (byte)dir;
+			v->state = (uint8_t)dir;
 			v->frame = start_frame;
 			RoadTramType rtt = GetRoadTramType(v->roadtype);
 			if (GetRoadType(old_tile, rtt) != GetRoadType(tile, rtt)) {
@@ -1407,8 +1389,7 @@ again:
 			if (u != nullptr) {
 				v->cur_speed = u->First()->cur_speed;
 				/* We might be blocked, prevent pathfinding rerun as we already know where we are heading to. */
-				v->path.tile.push_front(v->tile);
-				v->path.td.push_front(dir);
+				v->path.emplace_back(dir, v->tile);
 				return false;
 			}
 		}
@@ -1464,7 +1445,7 @@ again:
 			if (v->cur_speed == 0 && IsInsideMM(v->state, RVSB_IN_DT_ROAD_STOP, RVSB_IN_DT_ROAD_STOP_END) &&
 					v->current_order.ShouldStopAtStation(v, GetStationIndex(v->tile)) &&
 					v->owner == GetTileOwner(v->tile) && !v->current_order.IsType(OT_LEAVESTATION) &&
-					GetRoadStopType(v->tile) == (v->IsBus() ? ROADSTOP_BUS : ROADSTOP_TRUCK)) {
+					GetRoadStopType(v->tile) == (v->IsBus() ? RoadStopType::Bus : RoadStopType::Truck)) {
 				Station *st = Station::GetByTile(v->tile);
 				v->last_station_visited = st->index;
 				RoadVehArrivesAt(v, st);
@@ -1497,7 +1478,7 @@ again:
 			(IsInsideMM(v->state, RVSB_IN_DT_ROAD_STOP, RVSB_IN_DT_ROAD_STOP_END) &&
 			v->current_order.ShouldStopAtStation(v, GetStationIndex(v->tile)) &&
 			v->owner == GetTileOwner(v->tile) &&
-			GetRoadStopType(v->tile) == (v->IsBus() ? ROADSTOP_BUS : ROADSTOP_TRUCK) &&
+			GetRoadStopType(v->tile) == (v->IsBus() ? RoadStopType::Bus : RoadStopType::Truck) &&
 			v->frame == RVC_DRIVE_THROUGH_STOP_FRAME))) {
 
 		RoadStop *rs = RoadStop::GetByTile(v->tile, GetRoadStopType(v->tile));
@@ -1578,13 +1559,13 @@ static bool RoadVehController(RoadVehicle *v)
 	if (v->reverse_ctr != 0) v->reverse_ctr--;
 
 	/* handle crashed */
-	if (v->vehstatus & VS_CRASHED || RoadVehCheckTrainCrash(v)) {
+	if (v->vehstatus.Test(VehState::Crashed) || RoadVehCheckTrainCrash(v)) {
 		return RoadVehIsCrashed(v);
 	}
 
 	/* road vehicle has broken down? */
 	if (v->HandleBreakdown()) return true;
-	if (v->vehstatus & VS_STOPPED) {
+	if (v->vehstatus.Test(VehState::Stopped)) {
 		v->SetLastSpeed();
 		return true;
 	}
@@ -1629,7 +1610,7 @@ static bool RoadVehController(RoadVehicle *v)
 	v->SetLastSpeed();
 
 	for (RoadVehicle *u = v; u != nullptr; u = u->Next()) {
-		if ((u->vehstatus & VS_HIDDEN) != 0) continue;
+		if (u->vehstatus.Test(VehState::Hidden)) continue;
 
 		u->UpdateViewport(false, false);
 	}
@@ -1660,7 +1641,7 @@ bool RoadVehicle::Tick()
 	this->tick_counter++;
 
 	if (this->IsFrontEngine()) {
-		if (!(this->vehstatus & VS_STOPPED)) this->running_ticks++;
+		if (!this->vehstatus.Test(VehState::Stopped)) this->running_ticks++;
 		return RoadVehController(this);
 	}
 
@@ -1683,12 +1664,7 @@ static void CheckIfRoadVehNeedsService(RoadVehicle *v)
 		return;
 	}
 
-	uint max_penalty;
-	switch (_settings_game.pf.pathfinder_for_roadvehs) {
-		case VPF_NPF:  max_penalty = _settings_game.pf.npf.maximum_go_to_depot_penalty;  break;
-		case VPF_YAPF: max_penalty = _settings_game.pf.yapf.maximum_go_to_depot_penalty; break;
-		default: NOT_REACHED();
-	}
+	uint max_penalty = _settings_game.pf.yapf.maximum_go_to_depot_penalty;
 
 	FindDepotData rfdd = FindClosestRoadDepot(v, max_penalty);
 	/* Only go to the depot if it is not too far out of our way. */
@@ -1728,6 +1704,7 @@ void RoadVehicle::OnNewCalendarDay()
 void RoadVehicle::OnNewEconomyDay()
 {
 	if (!this->IsFrontEngine()) return;
+	EconomyAgeVehicle(this);
 
 	if ((++this->day_counter & 7) == 0) DecreaseVehicleValue(this);
 	if (this->blocked_ctr == 0) CheckVehicleBreakdown(this);
@@ -1751,7 +1728,7 @@ void RoadVehicle::OnNewEconomyDay()
 
 Trackdir RoadVehicle::GetVehicleTrackdir() const
 {
-	if (this->vehstatus & VS_CRASHED) return INVALID_TRACKDIR;
+	if (this->vehstatus.Test(VehState::Crashed)) return INVALID_TRACKDIR;
 
 	if (this->IsInDepot()) {
 		/* We'll assume the road vehicle is facing outwards */
@@ -1760,7 +1737,7 @@ Trackdir RoadVehicle::GetVehicleTrackdir() const
 
 	if (IsBayRoadStopTile(this->tile)) {
 		/* We'll assume the road vehicle is facing outwards */
-		return DiagDirToDiagTrackdir(GetRoadStopDir(this->tile)); // Road vehicle in a station
+		return DiagDirToDiagTrackdir(GetBayRoadStopDir(this->tile)); // Road vehicle in a station
 	}
 
 	/* Drive through road stops / wormholes (tunnels) */

@@ -6,7 +6,7 @@
  */
 
 /**
- * @file ai_changelog.hpp Lists all changes / additions to the API.
+ * @page ai_changelog Lists all changes / additions to the API.
  *
  * Only new / renamed / deleted api functions will be listed here. A list of
  * bug fixes can be found in the normal changelog. Note that removed API
@@ -17,10 +17,19 @@
  *
  * This version is not yet released. The following changes are not set in stone yet.
  *
+ * API additions:
+ * \li AIEventVehicleCrashed::GetVictims
+ * \li AIEventCompanyRenamed
+ * \li AIEventPresidentRenamed
+ *
+ * Other changes:
+ * \li AIBridge::GetBridgeID renamed to AIBridge::GetBridgeType
+ * \li AIWaypoint::GetWaypointID now returns the StationID of any type of waypoint
+ * \li AIList instances can now be saved
+ *
  * \b 14.0
  *
  * API additions:
- * \li AITimeMode
  * \li AITown::ROAD_LAYOUT_RANDOM
  * \li AIVehicle::IsPrimaryVehicle
  * \li AITileList_StationCoverage
@@ -29,6 +38,7 @@
  * API removals:
  * \li AIError::ERR_PRECONDITION_TOO_MANY_PARAMETERS, that error is never returned anymore.
  * \li AIInfo::CONFIG_RANDOM, no longer used.
+ * \li AIInfo::AddSettings random_deviation is no longer used.
  *
  * Other changes:
  * \li AIGroupList accepts an optional filter function
@@ -456,4 +466,18 @@
  *
  * \b 0.7.0
  * \li First stable release with the NoAI framework.
+ */
+
+/**
+ * @mainpage
+ *
+ * What's new?
+ * \li \ref ai_changelog
+ *
+ * Main classes:
+ * \li \ref AIInfo
+ * \li \ref AIController
+ *
+ * Detail topics:
+ * \li \ref script_ids
  */

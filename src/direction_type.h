@@ -21,7 +21,7 @@
  * your viewport and not rotated by 45 degrees left or right to get
  * a "north" used in you games.
  */
-enum Direction : byte {
+enum Direction : uint8_t {
 	DIR_BEGIN = 0,          ///< Used to iterate
 	DIR_N   = 0,            ///< North
 	DIR_NE  = 1,            ///< Northeast
@@ -36,7 +36,7 @@ enum Direction : byte {
 };
 
 /** Allow incrementing of Direction variables */
-DECLARE_POSTFIX_INCREMENT(Direction)
+DECLARE_INCREMENT_DECREMENT_OPERATORS(Direction)
 
 /**
  * Enumeration for the difference between two directions.
@@ -55,7 +55,7 @@ DECLARE_POSTFIX_INCREMENT(Direction)
  *       modulo DIR_END or use the #ChangeDirDiff(DirDiff, DirDiff) function.
  * @see ChangeDirDiff(DirDiff, DirDiff)
  */
-enum DirDiff {
+enum DirDiff : uint8_t {
 	DIRDIFF_SAME    = 0,    ///< Both directions faces to the same direction
 	DIRDIFF_45RIGHT = 1,    ///< Angle of 45 degrees right
 	DIRDIFF_90RIGHT = 2,    ///< Angle of 90 degrees right
@@ -70,7 +70,7 @@ enum DirDiff {
  *
  * This enumeration is used for the 4 direction of the tile-edges.
  */
-enum DiagDirection : byte {
+enum DiagDirection : uint8_t {
 	DIAGDIR_BEGIN = 0,      ///< Used for iterations
 	DIAGDIR_NE  = 0,        ///< Northeast, upper right on your monitor
 	DIAGDIR_SE  = 1,        ///< Southeast
@@ -79,7 +79,7 @@ enum DiagDirection : byte {
 	DIAGDIR_END,            ///< Used for iterations
 	INVALID_DIAGDIR = 0xFF, ///< Flag for an invalid DiagDirection
 };
-DECLARE_POSTFIX_INCREMENT(DiagDirection)
+DECLARE_INCREMENT_DECREMENT_OPERATORS(DiagDirection)
 DECLARE_ENUM_AS_ADDABLE(DiagDirection)
 
 /**
@@ -92,7 +92,7 @@ DECLARE_ENUM_AS_ADDABLE(DiagDirection)
  *
  * @see DirDiff
  */
-enum DiagDirDiff {
+enum DiagDirDiff : uint8_t {
 	DIAGDIRDIFF_BEGIN   = 0,        ///< Used for iterations
 	DIAGDIRDIFF_SAME    = 0,        ///< Same directions
 	DIAGDIRDIFF_90RIGHT = 1,        ///< 90 degrees right
@@ -102,7 +102,7 @@ enum DiagDirDiff {
 };
 
 /** Allow incrementing of DiagDirDiff variables */
-DECLARE_POSTFIX_INCREMENT(DiagDirDiff)
+DECLARE_INCREMENT_DECREMENT_OPERATORS(DiagDirDiff)
 
 
 /**
@@ -113,7 +113,7 @@ DECLARE_POSTFIX_INCREMENT(DiagDirDiff)
  * (and south-east edge). The Y axis must be so the one which goes
  * align the north-east edge (and south-west) edge.
  */
-enum Axis : byte {
+enum Axis : uint8_t {
 	AXIS_X = 0,          ///< The X axis
 	AXIS_Y = 1,          ///< The y axis
 	AXIS_END,            ///< Used for iterations

@@ -30,13 +30,13 @@ private:
 	 * Look at docs/landscape.html for the exact meaning of the members.
 	 */
 	struct TileBase {
-		byte   type;   ///< The type (bits 4..7), bridges (2..3), rainforest/desert (0..1)
-		byte   height; ///< The height of the northern corner.
-		uint16_t m2;     ///< Primarily used for indices to towns, industries and stations
-		byte   m1;     ///< Primarily used for ownership information
-		byte   m3;     ///< General purpose
-		byte   m4;     ///< General purpose
-		byte   m5;     ///< General purpose
+		uint8_t type = 0; ///< The type (bits 4..7), bridges (2..3), rainforest/desert (0..1)
+		uint8_t height = 0; ///< The height of the northern corner.
+		uint16_t m2 = 0; ///< Primarily used for indices to towns, industries and stations
+		uint8_t m1 = 0; ///< Primarily used for ownership information
+		uint8_t m3 = 0; ///< General purpose
+		uint8_t m4 = 0; ///< General purpose
+		uint8_t m5 = 0; ///< General purpose
 	};
 
 	static_assert(sizeof(TileBase) == 8);
@@ -46,13 +46,13 @@ private:
 	 * Look at docs/landscape.html for the exact meaning of the members.
 	 */
 	struct TileExtended {
-		byte m6;   ///< General purpose
-		byte m7;   ///< Primarily used for newgrf support
-		uint16_t m8; ///< General purpose
+		uint8_t m6 = 0; ///< General purpose
+		uint8_t m7 = 0; ///< Primarily used for newgrf support
+		uint16_t m8 = 0; ///< General purpose
 	};
 
-	static TileBase *base_tiles;         ///< Pointer to the tile-array.
-	static TileExtended *extended_tiles; ///< Pointer to the extended tile-array.
+	static std::unique_ptr<TileBase[]> base_tiles; ///< Pointer to the tile-array.
+	static std::unique_ptr<TileExtended[]> extended_tiles; ///< Pointer to the extended tile-array.
 
 	TileIndex tile; ///< The tile to access the map data for.
 
@@ -72,12 +72,12 @@ public:
 	/**
 	 * Implicit conversion to the TileIndex.
 	 */
-	debug_inline constexpr operator TileIndex() const { return tile; }
+	debug_inline constexpr operator TileIndex() const { return this->tile; }
 
 	/**
 	 * Implicit conversion to the uint for bounds checking.
 	 */
-	debug_inline constexpr operator uint() const { return tile.base(); }
+	debug_inline constexpr operator uint() const { return this->tile.base(); }
 
 	/**
 	 * The type (bits 4..7), bridges (2..3), rainforest/desert (0..1)
@@ -86,9 +86,9 @@ public:
 	 * @param tile The tile to get the data for.
 	 * @return reference to the byte holding the data.
 	 */
-	debug_inline byte &type()
+	debug_inline uint8_t &type()
 	{
-		return base_tiles[tile.base()].type;
+		return base_tiles[this->tile.base()].type;
 	}
 
 	/**
@@ -98,9 +98,9 @@ public:
 	 * @param tile The tile to get the height for.
 	 * @return reference to the byte holding the height.
 	 */
-	debug_inline byte &height()
+	debug_inline uint8_t &height()
 	{
-		return base_tiles[tile.base()].height;
+		return base_tiles[this->tile.base()].height;
 	}
 
 	/**
@@ -110,9 +110,9 @@ public:
 	 * @param tile The tile to get the data for.
 	 * @return reference to the byte holding the data.
 	 */
-	debug_inline byte &m1()
+	debug_inline uint8_t &m1()
 	{
-		return base_tiles[tile.base()].m1;
+		return base_tiles[this->tile.base()].m1;
 	}
 
 	/**
@@ -124,7 +124,7 @@ public:
 	 */
 	debug_inline uint16_t &m2()
 	{
-		return base_tiles[tile.base()].m2;
+		return base_tiles[this->tile.base()].m2;
 	}
 
 	/**
@@ -134,9 +134,9 @@ public:
 	 * @param tile The tile to get the data for.
 	 * @return reference to the byte holding the data.
 	 */
-	debug_inline byte &m3()
+	debug_inline uint8_t &m3()
 	{
-		return base_tiles[tile.base()].m3;
+		return base_tiles[this->tile.base()].m3;
 	}
 
 	/**
@@ -146,9 +146,9 @@ public:
 	 * @param tile The tile to get the data for.
 	 * @return reference to the byte holding the data.
 	 */
-	debug_inline byte &m4()
+	debug_inline uint8_t &m4()
 	{
-		return base_tiles[tile.base()].m4;
+		return base_tiles[this->tile.base()].m4;
 	}
 
 	/**
@@ -158,9 +158,9 @@ public:
 	 * @param tile The tile to get the data for.
 	 * @return reference to the byte holding the data.
 	 */
-	debug_inline byte &m5()
+	debug_inline uint8_t &m5()
 	{
-		return base_tiles[tile.base()].m5;
+		return base_tiles[this->tile.base()].m5;
 	}
 
 	/**
@@ -170,9 +170,9 @@ public:
 	 * @param tile The tile to get the data for.
 	 * @return reference to the byte holding the data.
 	 */
-	debug_inline byte &m6()
+	debug_inline uint8_t &m6()
 	{
-		return extended_tiles[tile.base()].m6;
+		return extended_tiles[this->tile.base()].m6;
 	}
 
 	/**
@@ -182,9 +182,9 @@ public:
 	 * @param tile The tile to get the data for.
 	 * @return reference to the byte holding the data.
 	 */
-	debug_inline byte &m7()
+	debug_inline uint8_t &m7()
 	{
-		return extended_tiles[tile.base()].m7;
+		return extended_tiles[this->tile.base()].m7;
 	}
 
 	/**
@@ -196,7 +196,7 @@ public:
 	 */
 	debug_inline uint16_t &m8()
 	{
-		return extended_tiles[tile.base()].m8;
+		return extended_tiles[this->tile.base()].m8;
 	}
 };
 
@@ -217,7 +217,6 @@ private:
 
 		explicit Iterator(TileIndex index) : index(index) {}
 		bool operator==(const Iterator &other) const { return this->index == other.index; }
-		bool operator!=(const Iterator &other) const { return !(*this == other); }
 		Tile operator*() const { return this->index; }
 		Iterator & operator++() { this->index++; return *this; }
 	private:
@@ -228,8 +227,8 @@ private:
 	 * Iterable ensemble of all Tiles
 	 */
 	struct IterateWrapper {
-		Iterator begin() { return Iterator(0); }
-		Iterator end() { return Iterator(Map::Size()); }
+		Iterator begin() { return Iterator(TileIndex{}); }
+		Iterator end() { return Iterator(TileIndex{Map::Size()}); }
 		bool empty() { return false; }
 	};
 
@@ -316,7 +315,7 @@ public:
 	 */
 	static inline TileIndex WrapToMap(TileIndex tile)
 	{
-		return tile.base() & Map::tile_mask;
+		return TileIndex{tile.base() & Map::tile_mask};
 	}
 
 	/**
@@ -364,18 +363,6 @@ public:
 };
 
 /**
- * An offset value between two tiles.
- *
- * This value is used for the difference between
- * two tiles. It can be added to a TileIndex to get
- * the resulting TileIndex of the start tile applied
- * with this saved difference.
- *
- * @see TileDiffXY(int, int)
- */
-typedef int32_t TileIndexDiff;
-
-/**
  * Returns the TileIndex of a coordinate.
  *
  * @param x The x coordinate of the tile
@@ -384,7 +371,7 @@ typedef int32_t TileIndexDiff;
  */
 debug_inline static TileIndex TileXY(uint x, uint y)
 {
-	return (y << Map::LogX()) + x;
+	return TileIndex{(y << Map::LogX()) + x};
 }
 
 /**
@@ -415,7 +402,7 @@ inline TileIndexDiff TileDiffXY(int x, int y)
  */
 debug_inline static TileIndex TileVirtXY(uint x, uint y)
 {
-	return (y >> 4 << Map::LogX()) + (x >> 4);
+	return TileIndex{(y >> 4 << Map::LogX()) + (x >> 4)};
 }
 
 
@@ -451,33 +438,38 @@ debug_inline static uint TileY(TileIndex tile)
  */
 inline TileIndexDiff ToTileIndexDiff(TileIndexDiffC tidc)
 {
-	return (tidc.y << Map::LogX()) + tidc.x;
+	return TileDiffXY(tidc.x, tidc.y);
 }
 
+/* Helper functions to provide explicit +=/-= operators for TileIndex and TileIndexDiff. */
+constexpr TileIndex &operator+=(TileIndex &tile, TileIndexDiff offset) { tile = tile + TileIndex(offset); return tile; }
+constexpr TileIndex &operator-=(TileIndex &tile, TileIndexDiff offset) { tile = tile - TileIndex(offset); return tile; }
 
+/**
+ * Adds a given offset to a tile.
+ *
+ * @param tile The tile to add an offset to.
+ * @param offset The offset to add.
+ * @return The resulting tile.
+ */
 #ifndef _DEBUG
-	/**
-	 * Adds two tiles together.
-	 *
-	 * @param x One tile
-	 * @param y Another tile to add
-	 * @return The resulting tile(index)
-	 */
-#	define TILE_ADD(x, y) ((x) + (y))
+	constexpr TileIndex TileAdd(TileIndex tile, TileIndexDiff offset) { return tile + offset; }
 #else
-	extern TileIndex TileAdd(TileIndex tile, TileIndexDiff add,
-		const char *exp, const char *file, int line);
-#	define TILE_ADD(x, y) (TileAdd((x), (y), #x " + " #y, __FILE__, __LINE__))
+	TileIndex TileAdd(TileIndex tile, TileIndexDiff offset);
 #endif
 
 /**
  * Adds a given offset to a tile.
  *
- * @param tile The tile to add an offset on it
- * @param x The x offset to add to the tile
- * @param y The y offset to add to the tile
+ * @param tile The tile to add an offset to.
+ * @param x The x offset to add to the tile.
+ * @param y The y offset to add to the tile.
+ * @return The resulting tile.
  */
-#define TILE_ADDXY(tile, x, y) TILE_ADD(tile, TileDiffXY(x, y))
+inline TileIndex TileAddXY(TileIndex tile, int x, int y)
+{
+	return TileAdd(tile, TileDiffXY(x, y));
+}
 
 TileIndex TileAddWrap(TileIndex tile, int addx, int addy);
 
@@ -547,11 +539,25 @@ inline TileIndexDiffC TileIndexToTileIndexDiffC(TileIndex tile_a, TileIndex tile
 
 /* Functions to calculate distances */
 uint DistanceManhattan(TileIndex, TileIndex); ///< also known as L1-Norm. Is the shortest distance one could go over diagonal tracks (or roads)
-uint DistanceSquare(TileIndex, TileIndex); ///< euclidian- or L2-Norm squared
+uint DistanceSquare(TileIndex, TileIndex); ///< Euclidean- or L2-Norm squared
 uint DistanceMax(TileIndex, TileIndex); ///< also known as L-Infinity-Norm
 uint DistanceMaxPlusManhattan(TileIndex, TileIndex); ///< Max + Manhattan
 uint DistanceFromEdge(TileIndex); ///< shortest distance from any edge of the map
 uint DistanceFromEdgeDir(TileIndex, DiagDirection); ///< distance from the map edge in given direction
+
+/**
+ * Convert an Axis to a TileIndexDiff
+ *
+ * @param axis The Axis
+ * @return The resulting TileIndexDiff in southern direction (either SW or SE).
+ */
+inline TileIndexDiff TileOffsByAxis(Axis axis)
+{
+	extern const TileIndexDiffC _tileoffs_by_axis[];
+
+	assert(IsValidAxis(axis));
+	return ToTileIndexDiff(_tileoffs_by_axis[axis]);
+}
 
 /**
  * Convert a DiagDirection to a TileIndexDiff
@@ -591,7 +597,7 @@ inline TileIndexDiff TileOffsByDir(Direction dir)
  */
 inline TileIndex TileAddByDir(TileIndex tile, Direction dir)
 {
-	return TILE_ADD(tile, TileOffsByDir(dir));
+	return TileAdd(tile, TileOffsByDir(dir));
 }
 
 /**
@@ -603,7 +609,7 @@ inline TileIndex TileAddByDir(TileIndex tile, Direction dir)
  */
 inline TileIndex TileAddByDiagDir(TileIndex tile, DiagDirection dir)
 {
-	return TILE_ADD(tile, TileOffsByDiagDir(dir));
+	return TileAdd(tile, TileOffsByDiagDir(dir));
 }
 
 /**
@@ -645,7 +651,7 @@ bool CircularTileSearch(TileIndex *tile, uint radius, uint w, uint h, TestTileOn
  */
 inline TileIndex RandomTileSeed(uint32_t r)
 {
-	return Map::WrapToMap(r);
+	return Map::WrapToMap(TileIndex{r});
 }
 
 /**

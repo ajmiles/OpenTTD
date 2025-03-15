@@ -8,7 +8,6 @@
 /** @file stringfilter.cpp Searching and filtering using a stringterm. */
 
 #include "stdafx.h"
-#include "core/alloc_func.hpp"
 #include "string_func.h"
 #include "strings_func.h"
 #include "stringfilter_type.h"
@@ -25,34 +24,34 @@ static const char32_t STATE_QUOTE2 = '"';
  * Set the term to filter on.
  * @param str Filter term
  */
-void StringFilter::SetFilterTerm(const char *str)
+void StringFilter::SetFilterTerm(std::string_view str)
 {
 	this->word_index.clear();
 	this->word_index.shrink_to_fit();
 	this->word_matches = 0;
-	free(this->filter_buffer);
-
-	assert(str != nullptr);
-
-	char *dest = MallocT<char>(strlen(str) + 1);
-	this->filter_buffer = dest;
 
 	char32_t state = STATE_WHITESPACE;
-	const char *pos = str;
-	WordState *word = nullptr;
-	size_t len;
-	for (;; pos += len) {
+	auto pos = str.begin();
+	auto word_begin = str.end();
+	auto word_end = pos;
+
+	/* Helper to prevent duplicating code. */
+	auto add_word = [&] () {
+		if (word_begin != str.end()) {
+			this->word_index.emplace_back(std::string(word_begin, word_end + 1), false);
+			word_begin = str.end();
+		}
+	};
+
+	for (size_t len; pos < str.end(); pos += len) {
 		char32_t c;
 		len = Utf8Decode(&c, pos);
 
-		if (c == 0 || (state == STATE_WORD && IsWhitespace(c))) {
+		if (state == STATE_WORD && IsWhitespace(c)) {
 			/* Finish word */
-			if (word != nullptr) {
-				*(dest++) = '\0';
-				word = nullptr;
-			}
+			add_word();
 			state = STATE_WHITESPACE;
-			if (c != 0) continue; else break;
+			continue;
 		}
 
 		if (state == STATE_WHITESPACE) {
@@ -74,22 +73,14 @@ void StringFilter::SetFilterTerm(const char *str)
 		}
 
 		/* Add to word */
-		if (word == nullptr) {
-			word = &this->word_index.emplace_back(WordState{ dest, false });
+		if (word_begin == str.end()) {
+			word_begin = pos;
 		}
-
-		memcpy(dest, pos, len);
-		dest += len;
+		word_end = pos;
 	}
-}
 
-/**
- * Set the term to filter on.
- * @param str Filter term
- */
-void StringFilter::SetFilterTerm(const std::string &str)
-{
-	this->SetFilterTerm(str.c_str());
+	/* Add the last word of the string. */
+	add_word();
 }
 
 /**
@@ -119,42 +110,16 @@ void StringFilter::AddLine(const char *str)
 	for (WordState &ws : this->word_index) {
 		if (!ws.match) {
 			if (this->locale_aware) {
-				if (match_case ? StrNaturalContains(str, ws.start) : StrNaturalContainsIgnoreCase(str, ws.start)) {
+				if (match_case ? StrNaturalContains(str, ws.word) : StrNaturalContainsIgnoreCase(str, ws.word)) {
 					ws.match = true;
 					this->word_matches++;
 				}
 			} else {
-				if ((match_case ? strstr(str, ws.start) : strcasestr(str, ws.start)) != nullptr) {
+				if ((match_case ? strstr(str, ws.word.c_str()) : strcasestr(str, ws.word.c_str())) != nullptr) {
 					ws.match = true;
 					this->word_matches++;
 				}
 			}
 		}
 	}
-}
-
-/**
- * Pass another text line from the current item to the filter.
- *
- * You can call this multiple times for a single item, if the filter shall apply to multiple things.
- * Before processing the next item you have to call ResetState().
- *
- * @param str Another line from the item.
- */
-void StringFilter::AddLine(const std::string &str)
-{
-	AddLine(str.c_str());
-}
-
-/**
- * Pass another text line from the current item to the filter.
- *
- * You can call this multiple times for a single item, if the filter shall apply to multiple things.
- * Before processing the next item you have to call ResetState().
- *
- * @param str Another line from the item.
- */
-void StringFilter::AddLine(StringID str)
-{
-	AddLine(GetString(str));
 }

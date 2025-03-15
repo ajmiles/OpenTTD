@@ -17,9 +17,9 @@
 #include "core/bitmath_func.hpp"
 #include "string_type.h"
 
-char *strecpy(char *dst, const char *src, const char *last) NOACCESS(3);
+void strecpy(std::span<char> dst, std::string_view src);
 
-std::string FormatArrayAsHex(std::span<const byte> data);
+std::string FormatArrayAsHex(std::span<const uint8_t> data);
 
 void StrMakeValidInPlace(char *str, const char *last, StringValidationSettings settings = SVS_REPLACE_WITH_QUESTION_MARK) NOACCESS(2);
 [[nodiscard]] std::string StrMakeValid(std::string_view str, StringValidationSettings settings = SVS_REPLACE_WITH_QUESTION_MARK);
@@ -27,8 +27,9 @@ void StrMakeValidInPlace(char *str, StringValidationSettings settings = SVS_REPL
 
 bool strtolower(std::string &str, std::string::size_type offs = 0);
 
-[[nodiscard]] bool StrValid(const char *str, const char *last) NOACCESS(2);
+[[nodiscard]] bool StrValid(std::span<const char> str);
 void StrTrimInPlace(std::string &str);
+std::string_view StrTrimView(std::string_view str);
 
 [[nodiscard]] bool StrStartsWithIgnoreCase(std::string_view str, const std::string_view prefix);
 [[nodiscard]] bool StrEndsWithIgnoreCase(std::string_view str, const std::string_view suffix);
@@ -68,16 +69,20 @@ inline bool StrEmpty(const char *s)
 inline size_t ttd_strnlen(const char *str, size_t maxlen)
 {
 	const char *t;
-	for (t = str; (size_t)(t - str) < maxlen && *t != '\0'; t++) {}
+	for (t = str; static_cast<size_t>(t - str) < maxlen && *t != '\0'; t++) {}
 	return t - str;
 }
 
 bool IsValidChar(char32_t key, CharSetFilter afilter);
 
 size_t Utf8Decode(char32_t *c, const char *s);
+/* std::string_view::iterator might be char *, in which case we do not want this templated variant to be taken. */
+template <typename T> requires (!std::is_same_v<T, char *> && (std::is_same_v<std::string_view::iterator, T> || std::is_same_v<std::string::iterator, T>))
+inline size_t Utf8Decode(char32_t *c, T &s) { return Utf8Decode(c, &*s); }
 size_t Utf8Encode(char *buf, char32_t c);
 size_t Utf8Encode(std::ostreambuf_iterator<char> &buf, char32_t c);
 size_t Utf8Encode(std::back_insert_iterator<std::string> &buf, char32_t c);
+inline size_t Utf8Encode(std::string::iterator &s, char32_t c) { return Utf8Encode(&*s, c); }
 size_t Utf8TrimString(char *s, size_t maxlen);
 
 
@@ -157,6 +162,15 @@ inline const char *Utf8PrevChar(const char *s)
 	const char *ret = s;
 	while (IsUtf8Part(*--ret)) {}
 	return ret;
+}
+
+inline std::string::iterator Utf8PrevChar(std::string::iterator &s)
+{
+	auto cur = s;
+	do {
+		cur = std::prev(cur);
+	} while (IsUtf8Part(*cur));
+	return cur;
 }
 
 size_t Utf8StringLength(const char *s);

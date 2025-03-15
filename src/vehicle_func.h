@@ -12,6 +12,7 @@
 
 #include "gfx_type.h"
 #include "direction_type.h"
+#include "timer/timer_game_economy.h"
 #include "command_type.h"
 #include "vehicle_type.h"
 #include "engine_type.h"
@@ -24,7 +25,7 @@
 #define IS_CUSTOM_FIRSTHEAD_SPRITE(x) (x == 0xFD)
 #define IS_CUSTOM_SECONDHEAD_SPRITE(x) (x == 0xFE)
 
-static const int VEHICLE_PROFIT_MIN_AGE = CalendarTime::DAYS_IN_YEAR * 2; ///< Only vehicles older than this have a meaningful profit.
+static const TimerGameEconomy::Date VEHICLE_PROFIT_MIN_AGE{CalendarTime::DAYS_IN_YEAR * 2}; ///< Only vehicles older than this have a meaningful profit.
 static const Money VEHICLE_PROFIT_THRESHOLD = 10000;        ///< Threshold for a vehicle to be considered making good profit.
 
 /**
@@ -52,15 +53,16 @@ void VehicleLengthChanged(const Vehicle *u);
 void ResetVehicleHash();
 void ResetVehicleColourMap();
 
-byte GetBestFittingSubType(Vehicle *v_from, Vehicle *v_for, CargoID dest_cargo_type);
+uint8_t GetBestFittingSubType(Vehicle *v_from, Vehicle *v_for, CargoType dest_cargo_type);
 
 void ViewportAddVehicles(DrawPixelInfo *dpi);
 
-void ShowNewGrfVehicleError(EngineID engine, StringID part1, StringID part2, GRFBugs bug_type, bool critical);
+void ShowNewGrfVehicleError(EngineID engine, StringID part1, StringID part2, GRFBug bug_type, bool critical);
 CommandCost TunnelBridgeIsFree(TileIndex tile, TileIndex endtile, const Vehicle *ignore = nullptr);
 
 void DecreaseVehicleValue(Vehicle *v);
 void CheckVehicleBreakdown(Vehicle *v);
+void EconomyAgeVehicle(Vehicle *v);
 void AgeVehicle(Vehicle *v);
 void RunVehicleCalendarDayProc();
 void VehicleEnteredDepotThisTick(Vehicle *v);
@@ -69,7 +71,7 @@ UnitID GetFreeUnitNumber(VehicleType type);
 
 void VehicleEnterDepot(Vehicle *v);
 
-bool CanBuildVehicleInfrastructure(VehicleType type, byte subtype = 0);
+bool CanBuildVehicleInfrastructure(VehicleType type, uint8_t subtype = 0);
 
 /** Position information of a vehicle after it moved */
 struct GetNewVehiclePosResult {
@@ -88,15 +90,7 @@ Direction GetDirectionTowards(const Vehicle *v, int x, int y);
  */
 inline bool IsCompanyBuildableVehicleType(VehicleType type)
 {
-	switch (type) {
-		case VEH_TRAIN:
-		case VEH_ROAD:
-		case VEH_SHIP:
-		case VEH_AIRCRAFT:
-			return true;
-
-		default: return false;
-	}
+	return type < VEH_COMPANY_END;
 }
 
 /**
@@ -110,13 +104,15 @@ inline bool IsCompanyBuildableVehicleType(const BaseVehicle *v)
 }
 
 LiveryScheme GetEngineLiveryScheme(EngineID engine_type, EngineID parent_engine_type, const Vehicle *v);
-const struct Livery *GetEngineLivery(EngineID engine_type, CompanyID company, EngineID parent_engine_type, const Vehicle *v, byte livery_setting);
+const struct Livery *GetEngineLivery(EngineID engine_type, CompanyID company, EngineID parent_engine_type, const Vehicle *v, uint8_t livery_setting);
 
 SpriteID GetEnginePalette(EngineID engine_type, CompanyID company);
 SpriteID GetVehiclePalette(const Vehicle *v);
 
 extern const StringID _veh_build_msg_table[];
 extern const StringID _veh_sell_msg_table[];
+extern const StringID _veh_sell_all_msg_table[];
+extern const StringID _veh_autoreplace_msg_table[];
 extern const StringID _veh_refit_msg_table[];
 extern const StringID _send_to_depot_msg_table[];
 
@@ -139,6 +135,16 @@ inline StringID GetCmdSellVehMsg(VehicleType type)
 inline StringID GetCmdSellVehMsg(const BaseVehicle *v)
 {
 	return GetCmdSellVehMsg(v->type);
+}
+
+inline StringID GetCmdSellAllVehMsg(VehicleType type)
+{
+	return _veh_sell_all_msg_table[type];
+}
+
+inline StringID GetCmdAutoreplaceVehMsg(VehicleType type)
+{
+	return _veh_autoreplace_msg_table[type];
 }
 
 inline StringID GetCmdRefitVehMsg(VehicleType type)
