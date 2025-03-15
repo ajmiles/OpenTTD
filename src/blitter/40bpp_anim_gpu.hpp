@@ -10,11 +10,12 @@
 #ifndef BLITTER_40BPP_GPU_HPP
 #define BLITTER_40BPP_GPU_HPP
 
-#include "factory.hpp"
+//#include "factory.hpp"
+#include "32bpp_optimized.hpp"
 #include "../video/video_driver.hpp"
 
 /** The optimized 40 bpp GPU blitter. */
-class Blitter_40bppAnimGPU : public Blitter {
+class Blitter_40bppAnimGPU : public Blitter_32bppOptimized {
 public:
 	struct SpriteData {
 		uint32_t gpuSpriteID;	// Not the same as SpriteID
@@ -31,18 +32,18 @@ public:
 	void ScrollBuffer(void *video, int &left, int &top, int &width, int &height, int scroll_x, int scroll_y) override;
 	void Draw(Blitter::BlitterParams *bp, BlitterMode mode, ZoomLevel zoom) override;
 	void DrawColourMappingRect(void *dst, int width, int height, PaletteID pal) override;
-	Sprite *Encode(const SpriteLoader::SpriteCollection &sprite, AllocatorProc *allocator) override;
+	Sprite *Encode(const SpriteLoader::SpriteCollection &sprite, SpriteAllocator &allocator) override;
 	size_t BufferSize(uint width, uint height) override;
 	Blitter::PaletteAnimation UsePaletteAnimation() override;
 	void PaletteAnimate(const Palette &palette) override;
 	bool NeedsAnimationBuffer() override;
 
-	const char *GetName()  override { return "40bpp-anim-gpu"; }
+	std::string_view GetName()  override { return "40bpp-anim-gpu"; }
 
 	void Draw(const Blitter::BlitterParams *bp, BlitterMode mode, ZoomLevel zoom);
 
 protected:
-	Sprite *EncodeInternal(const SpriteLoader::SpriteCollection &sprite, AllocatorProc *allocator);
+	//Sprite *EncodeInternal(const SpriteLoader::SpriteCollection &sprite, SpriteAllocator &allocator);
 };
 
 /** Factory for the 40 bpp animated GPU blitter). */

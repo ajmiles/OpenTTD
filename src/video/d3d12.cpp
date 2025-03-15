@@ -218,7 +218,7 @@ const char *D3D12Backend::Init()
 	rtvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 	srvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
-	paletteSurface = MallocT<uint>(256);
+	paletteSurface = new uint32_t[256];//MallocT<uint>(256);
 
 	// Timestamp queries
 	{
@@ -579,11 +579,11 @@ bool D3D12Backend::Resize(int w, int h, bool force)
 
 	uint vidRowPitch = (alignedW * bytesPerPixel);
 	uint vidBufferSize = vidRowPitch * h;
-	vidSurface = MallocT<char>(vidBufferSize);
+	vidSurface = new char[vidBufferSize];// MallocT<char>(vidBufferSize);
 
 	uint animRowPitch = alignedW;
 	uint animBufferSize = animRowPitch * h;
-	animSurface = MallocT<char>(animBufferSize);
+	animSurface = new char[animBufferSize];// MallocT<char>(animBufferSize);
 
 	ZeroMemory(vidSurface, vidBufferSize);
 	ZeroMemory(animSurface, animBufferSize);
@@ -1076,21 +1076,21 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 	ZoomLevel zoom_min;
 	ZoomLevel zoom_max;
 
-	if (spriteColl[ZOOM_LVL_NORMAL].type == SpriteType::Font) {
-		zoom_min = ZOOM_LVL_NORMAL;
-		zoom_max = ZOOM_LVL_NORMAL;
+	if (spriteColl[ZOOM_LVL_MIN].type == SpriteType::Font) {
+		zoom_min = ZOOM_LVL_MIN;
+		zoom_max = ZOOM_LVL_MIN;
 	} else {
-		zoom_min = ZOOM_LVL_NORMAL;
+		zoom_min = ZOOM_LVL_MIN;
 		zoom_max = (ZoomLevel)(ZOOM_LVL_END - 1);	// TODO get client settings.
 		if (zoom_max == zoom_min) zoom_max = ZOOM_LVL_MAX;
 	}
 
-	auto prevWidth = spriteColl[0].width;
-	auto prevHeight = spriteColl[0].height;
+	uint16_t prevWidth = spriteColl[zoom_min].width;
+	uint16_t prevHeight = spriteColl[zoom_min].height;
 
 	for (int z = zoom_min + 1; z <= zoom_max; z++) {
-		auto nextWidth = spriteColl[z].width;
-		auto nextHeight = spriteColl[z].height;
+		uint16_t nextWidth = spriteColl[z].width;
+		uint16_t nextHeight = spriteColl[z].height;
 
 		uint16_t expectedWidth = ceil(prevWidth / 2.0f);
 		uint16_t expectedHeight = ceil(prevHeight / 2.0f);
@@ -1112,10 +1112,10 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 	uint16_t maxMipWidth = lowestMipWidth;
 	uint16_t maxMipHeight = lowestMipHeight;
 
-	uint numMips = zoom_max - zoom_min;
+	uint numMips = (zoom_max - zoom_min) + 1;
 
-	maxMipWidth <<= numMips;
-	maxMipHeight <<= numMips;
+	maxMipWidth <<= (numMips - 1);
+	maxMipHeight <<= (numMips - 1);
 
 
 	//D3D12_RESOURCE_DESC dxDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R8_UINT, maxMipWidth, maxMipHeight);
@@ -1140,19 +1140,19 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDesc.Texture2D.MipLevels = 1;
 		
-		if (sprite.colours == SCC_PAL) {
+		if (sprite.colours == SpriteComponent::Palette) {
 			srvDesc.Format = DXGI_FORMAT_R8G8_UINT;
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;// D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 1, 4, 4);	// Red, G, 0, 0
 		}
-		else if (sprite.colours == (SCC_ALPHA | SCC_PAL)) {
+		else if (sprite.colours.Test(SpriteComponent::Alpha) && sprite.colours.Test(SpriteComponent::Palette)) {
 			srvDesc.Format = DXGI_FORMAT_R8G8_UINT;
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;// D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 1, 4, 4);	// Red, G, 0, 0
 		}
-		else if (sprite.colours == (SCC_RGB | SCC_ALPHA)) {
+		else if (sprite.colours.Test(SpriteComponent::RGB) && sprite.colours.Test(SpriteComponent::Alpha)) {
 			srvDesc.Format = DXGI_FORMAT_R32_UINT;
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		}
-		else if (sprite.colours == SCC_MASK) {
+		else if (sprite.colours.Test(SpriteComponent::RGB)) {
 			srvDesc.Format = DXGI_FORMAT_R32_UINT;
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;// D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 1, 4, 4);	// Red, G, 0, 0
 		}
@@ -1184,12 +1184,11 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 
 	int numTexturesNeeded = zoom_max - zoom_min + 1;
 
-	D3D12_RESOURCE_ALLOCATION_INFO1 defaultAllocInfos[ZOOM_LVL_END];
-	auto defaultHeapInfo = device->GetResourceAllocationInfo1(0, numTexturesNeeded, defaultDescs, defaultAllocInfos);
+	D3D12_RESOURCE_ALLOCATION_INFO1 defaultAllocInfos[ZOOM_LVL_END];	auto defaultHeapInfo = device->GetResourceAllocationInfo1(0, numTexturesNeeded, defaultDescs + zoom_min, defaultAllocInfos);
 
-	CD3DX12_RESOURCE_DESC oneTexDesc = CD3DX12_RESOURCE_DESC::Tex2D(defaultDescs[0].Format, maxMipWidth, maxMipHeight);
+	CD3DX12_RESOURCE_DESC oneTexDesc = CD3DX12_RESOURCE_DESC::Tex2D(defaultDescs[zoom_min].Format, maxMipWidth, maxMipHeight);
 	oneTexDesc.Alignment = D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT;
-	oneTexDesc.MipLevels = numMips + 1;
+	oneTexDesc.MipLevels = numMips;
 
 	D3D12_RESOURCE_ALLOCATION_INFO dxSize = device->GetResourceAllocationInfo(0, 1, &oneTexDesc);
 
@@ -1231,12 +1230,12 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 
 		const SpriteLoader::Sprite &sprite = spriteColl[z];
 
-		HRESULT hr = device->CreatePlacedResource(defaultHeap.Get(), defaultAllocInfos[z].Offset, &defaultDescs[z], D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(defaultResources[z].ReleaseAndGetAddressOf()));
+		HRESULT hr = device->CreatePlacedResource(defaultHeap.Get(), defaultAllocInfos[z - zoom_min].Offset, &defaultDescs[z], D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(defaultResources[z].ReleaseAndGetAddressOf()));
 		assert(SUCCEEDED(hr));
 				
 		uint numTexels = sprite.width * sprite.height;
 
-		if (sprite.colours == (SCC_RGB | SCC_ALPHA) || sprite.colours == SCC_MASK) {
+		if (sprite.colours.Test(SpriteComponent::RGB) && sprite.colours.Test(SpriteComponent::Alpha)){// || sprite.colours == SCC_MASK) {
 			for(uint y = 0; y < sprite.height; y++) {
 
 				uint32_t* row = (uint32_t*)((char*)uploadPtr + footprints[z].Offset + (y * footprints[z].Footprint.RowPitch));
@@ -1252,11 +1251,12 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 		}
 		else if(false) {
 			// Copy just the 'm' channel
-			uint8_t *mData = MallocT<uint8_t>(numTexels);
 
-			free(mData);
+			//uint8_t *mData = MallocT<uint8_t>(numTexels);
+
+			//free(mData);
 		}
-		else if ((sprite.colours == (SCC_ALPHA | SCC_PAL)) || (sprite.colours == (SCC_PAL))) {
+		else if (sprite.colours.Test(SpriteComponent::Alpha) && sprite.colours.Test(SpriteComponent::Palette) || sprite.colours.Test(SpriteComponent::Palette)) {
 			for(uint y = 0; y < sprite.height; y++) {
 
 				uint16_t* row = (uint16_t*)((char*)uploadPtr + footprints[z].Offset + (y * footprints[z].Footprint.RowPitch));
@@ -1310,6 +1310,15 @@ uint32_t D3D12Backend::CreateGPUSprite(const SpriteLoader::SpriteCollection &spr
 	spriteResources.push_back(spriteZoomSet);
 
 	return nextGPUSpriteID++;
+}
+
+/* virtual */ Sprite *D3D12Backend::Encode(const SpriteLoader::SpriteCollection &sprite, SpriteAllocator &allocator)
+{
+	/* This encoding is only called for mouse cursors. We don't need real sprites but OpenGLSprites to show as cursor. These need to be put in the LRU cache. */
+	//OpenGLSpriteAllocator &gl_allocator = static_cast<OpenGLSpriteAllocator &>(allocator);
+	//gl_allocator.lru.Insert(gl_allocator.sprite, std::make_unique<OpenGLSprite>(sprite));
+
+	return nullptr;
 }
 
 void D3D12Backend::ScrollBuffer(int &left, int &top, int &width, int &height, int scroll_x, int scroll_y)

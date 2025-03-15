@@ -183,7 +183,8 @@ public:
 	VideoDriver_Win32D3D12() : VideoDriver_Win32Base(true)
 	{}
 
-	const char *Start(const StringList &param) override;
+	//const char *Start(const StringList &param) override;
+	std::optional<std::string_view> Start(const StringList &param) override;
 
 	void Stop() override;
 
@@ -229,14 +230,14 @@ public:
 
 	void ToggleVsync(bool vsync) override;
 
-	const char *GetName() const override
+	std::string_view GetName() const override
 	{
 		return "win32-d3d12";
 	}
 
-	const char *GetInfoString() const override
+	std::string_view GetInfoString() const override
 	{
-		return this->driver_info.c_str();
+		return this->driver_info;
 	}
 
 protected:

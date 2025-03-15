@@ -1607,7 +1607,7 @@ void VideoDriver_Win32OpenGL::Paint()
 
 static FVideoDriver_Win32D3D12 iFVideoDriver_Win32D3D12;
 
-const char *VideoDriver_Win32D3D12::Start(const StringList &param)
+std::optional<std::string_view> VideoDriver_Win32D3D12::Start(const StringList &param)
 {
 	if (BlitterFactory::GetCurrentBlitter()->GetScreenDepth() == 0) return "Only real blitters supported";
 
@@ -1634,7 +1634,7 @@ const char *VideoDriver_Win32D3D12::Start(const StringList &param)
 
 	this->is_game_threaded = !GetDriverParamBool(param, "no_threads") && !GetDriverParamBool(param, "no_thread");
 
-	return nullptr;
+	return std::nullopt;
 }
 
 void VideoDriver_Win32D3D12::Stop()
@@ -1763,7 +1763,7 @@ void VideoDriver_Win32D3D12::Paint()
 
 		/* Always push a changed palette to D3D12. */
 		D3D12Backend::Get()->UpdatePalette(_local_palette.palette, _local_palette.first_dirty, _local_palette.count_dirty);
-		if (blitter->UsePaletteAnimation() == Blitter::PALETTE_ANIMATION_BLITTER) {
+		if (blitter->UsePaletteAnimation() == Blitter::PaletteAnimation::Blitter) {
 			blitter->PaletteAnimate(_local_palette);
 		}
 

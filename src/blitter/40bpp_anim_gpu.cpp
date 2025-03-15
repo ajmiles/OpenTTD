@@ -105,7 +105,7 @@ void Blitter_40bppAnimGPU::Draw(Blitter::BlitterParams *bp, BlitterMode mode, Zo
 	request.skip_left = bp->skip_left;
 	request.skip_top = bp->skip_top;
 	request.zoom = zoom;
-	request.blitterMode = mode;
+	request.blitterMode = (uint)mode;
 	request.remap = bp->remap;
 
 
@@ -123,9 +123,20 @@ void Blitter_40bppAnimGPU::DrawColourMappingRect(void *dst, int width, int heigh
 	VideoDriver::GetInstance()->EnqueueDrawColourMappingRect(x, y, width, height, pal);
 }
 
-Sprite *Blitter_40bppAnimGPU::Encode(const SpriteLoader::SpriteCollection &sprite, AllocatorProc *allocator)
+Sprite *Blitter_40bppAnimGPU::Encode(const SpriteLoader::SpriteCollection &sprite, SpriteAllocator &allocator)
 {
-	return this->EncodeInternal(sprite, allocator);
+	Sprite *newSprite = this->EncodeInternal<false>(sprite, allocator);
+
+	/*Sprite *dest_sprite = (Sprite *)allocator(sizeof(*dest_sprite) + sizeof(SpriteData));
+	dest_sprite->height = sprite[ZOOM_LVL_NORMAL].height;
+	dest_sprite->width	= sprite[ZOOM_LVL_NORMAL].width;
+	dest_sprite->x_offs = sprite[ZOOM_LVL_NORMAL].x_offs;
+	dest_sprite->y_offs = sprite[ZOOM_LVL_NORMAL].y_offs;*/
+
+	SpriteData *dst = (SpriteData *)newSprite->data;
+	dst->gpuSpriteID = VideoDriver::GetInstance()->CreateGPUSprite(sprite);
+
+	return newSprite;
 }
 
 
@@ -203,7 +214,7 @@ size_t Blitter_40bppAnimGPU::BufferSize([[maybe_unused]] uint width, [[maybe_unu
 
 Blitter::PaletteAnimation Blitter_40bppAnimGPU::UsePaletteAnimation()
 {
-	return Blitter::PALETTE_ANIMATION_VIDEO_BACKEND;
+	return Blitter::PaletteAnimation::VideoBackend;
 }
 
 void Blitter_40bppAnimGPU::PaletteAnimate([[maybe_unused]] const Palette &palette)
@@ -214,18 +225,4 @@ void Blitter_40bppAnimGPU::PaletteAnimate([[maybe_unused]] const Palette &palett
 bool Blitter_40bppAnimGPU::NeedsAnimationBuffer()
 {
 	return true;
-}
-
-Sprite *Blitter_40bppAnimGPU::EncodeInternal(const SpriteLoader::SpriteCollection &sprite, AllocatorProc *allocator)
-{
-	Sprite *dest_sprite = (Sprite *)allocator(sizeof(*dest_sprite) + sizeof(SpriteData));
-	dest_sprite->height = sprite[ZOOM_LVL_NORMAL].height;
-	dest_sprite->width	= sprite[ZOOM_LVL_NORMAL].width;
-	dest_sprite->x_offs = sprite[ZOOM_LVL_NORMAL].x_offs;
-	dest_sprite->y_offs = sprite[ZOOM_LVL_NORMAL].y_offs;
-
-	SpriteData *dst = (SpriteData *)dest_sprite->data;
-	dst->gpuSpriteID = VideoDriver::GetInstance()->CreateGPUSprite(sprite);
-
-	return dest_sprite;
 }

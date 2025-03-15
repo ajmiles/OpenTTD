@@ -398,7 +398,7 @@ struct SpriteBlitRequest {
 	int skip_top;
 	ZoomLevel zoom;
 	uint blitterMode;	// BlitterMode. Can't include the type from here
-	const byte *remap;
+	const uint8_t *remap;
 };
 
 #endif /* GFX_TYPE_H */

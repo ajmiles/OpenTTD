@@ -71,7 +71,7 @@ public:
 };
 
 /** Platform-independent back-end class for D3D12 video drivers. */
-class D3D12Backend : public ZeroedMemoryAllocator {
+class D3D12Backend : public SpriteEncoder {
 private:
 	static D3D12Backend *instance; ///< Singleton instance pointer.
 
@@ -138,7 +138,7 @@ private:
 
 	void *vidSurface = nullptr;
 	void *animSurface = nullptr;
-	void *paletteSurface = nullptr;
+	uint32_t *paletteSurface = nullptr;
 	bool paletteIsDirty[SWAP_CHAIN_BACK_BUFFER_COUNT];
 	bool isFirstPaletteUpdate = true;
 
@@ -242,6 +242,16 @@ public:
 
 	uint32_t CreateGPUSprite(const SpriteLoader::SpriteCollection &sprite);
 	void ScrollBuffer(int &left, int &top, int &width, int &height, int scroll_x, int scroll_y);
+
+	bool Is32BppSupported() override
+	{
+		return true;
+	}
+	uint GetSpriteAlignment() override
+	{
+		return 1u << (ZOOM_LVL_END - 1);
+	}
+	Sprite *Encode(const SpriteLoader::SpriteCollection &sprite, SpriteAllocator &allocator) override;
 };
 
 #endif /* VIDEO_D3D12_H */
